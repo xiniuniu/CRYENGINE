@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,17 +9,10 @@
 #include <CrySerialization/BlackBox.h>
 
 struct ICharacterInstance;
-class ICryXML;
+struct ICryXML;
 struct IPakSystem;
 
 #include <CrySerialization/Forward.h>
-
-struct SkeletonAlias
-{
-	string& alias;
-
-	SkeletonAlias(string& alias) : alias(alias) {}
-};
 
 using std::vector;
 
@@ -86,7 +79,6 @@ struct SCompressionSettings
 
 struct SAnimationBuildSettings
 {
-	string               skeletonAlias;
 	bool                 additive;
 	SCompressionSettings compression;
 	std::vector<string>  tags;

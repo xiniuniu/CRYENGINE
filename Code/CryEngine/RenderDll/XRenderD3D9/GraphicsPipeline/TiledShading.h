@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,16 +9,26 @@
 class CTiledShadingStage : public CGraphicsPipelineStage
 {
 public:
-	CTiledShadingStage();
+	enum EExecutionMode
+	{
+		eDeferredMode_Off      = 0,
+		eDeferredMode_Enabled  = 2,
+		eDeferredMode_1Pass    = 2,
+		eDeferredMode_2Pass    = 3,
+		eDeferredMode_Disabled = 4
+	};
+	static const EGraphicsPipelineStage StageID = eStage_TiledShading;
+
+	CTiledShadingStage(CGraphicsPipeline& graphicsPipeline);
 	~CTiledShadingStage();
 
-	void Init();
-	void Execute();
-	void PrepareResources();
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return CRendererCVars::CV_r_DeferredShadingTiled >= CTiledShadingStage::eDeferredMode_1Pass;
+	}
 
-private:
-	void PrepareLightVolumeInfo();
-	bool ExecuteVolumeListGen(uint32 dispatchSizeX, uint32 dispatchSizeY);
+	void Init() final;
+	void Execute();
 
 private:
 	enum EVolumeTypes
@@ -29,7 +39,7 @@ private:
 
 		eVolumeType_Count
 	};
-	
+
 	struct SVolumeGeometry
 	{
 		CGpuBuffer       vertexDataBuf;

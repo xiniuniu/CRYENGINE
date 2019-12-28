@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "MetadataCompiler.h"
@@ -6,6 +6,8 @@
 #include "FileUtil.h"
 #include "StringHelpers.h"
 #include "CGF/CGFLoader.h"
+#include <vector>
+#include <stack>
 
 namespace
 {
@@ -76,7 +78,7 @@ bool IsCgfLod(const string& cgf)
 //! Removes the read-only attribute and deletes the file. Returns true if successful or file does not exist, otherwise returns false.
 bool DeleteFileIfExists(const string filename)
 {
-	SetFileAttributesA(filename.c_str(), FILE_ATTRIBUTE_ARCHIVE);
+	FileUtil::MakeWritable(filename.c_str());
 	return (DeleteFileA(filename.c_str()) != 0) || (GetLastError() == ERROR_FILE_NOT_FOUND);
 }
 
@@ -117,10 +119,10 @@ void CollectCgfDetails(XmlNodeRef& xmlnode, const CContentCGF& cgf)
 		details.emplace_back("bonesCount", string().Format("%i", pSkin->m_arrBoneEntities.size()));
 	}
 
-	std::vector<string> dependencies;
+	std::vector<std::pair<string,int32>> dependencies;
 	if (materialCount)
 	{
-		dependencies.emplace_back(PathUtil::ReplaceExtension(cgf.GetMaterial(0)->name, "mtl"));
+		dependencies.emplace_back(PathUtil::ReplaceExtension(cgf.GetMaterial(0)->name, "mtl"), 1);
 	}
 
 	AssetManager::AddDetails(xmlnode, details);
@@ -165,7 +167,7 @@ bool CollectMtlDetails(XmlNodeRef& xmlnode, const char* szFilename, IResourceCom
 
 	int subMaterialCount = 0;
 	int textureCount = 0;
-	std::vector<string> dependencies;
+	std::vector<std::pair<string, int32>> dependencies;
 	std::stack<XmlNodeRef> mtls;
 	mtls.push(mtl);
 	while (!mtls.empty())
@@ -185,7 +187,18 @@ bool CollectMtlDetails(XmlNodeRef& xmlnode, const char* szFilename, IResourceCom
 				{
 					continue;
 				}
-				dependencies.emplace_back(PathUtil::ReplaceExtension(filename, "dds"));
+				const string path = PathUtil::ReplaceExtension(filename, "dds");
+				auto it = std::find_if(dependencies.begin(), dependencies.end(), [&path](const auto& x) 
+				{ 
+					return path.CompareNoCase(x.first) == 0; 
+				});
+
+				if (it != dependencies.end())
+				{
+					++(it->second);
+					continue;
+				}
+				dependencies.emplace_back(path, 1);
 				++textureCount;
 			}
 		}
@@ -252,16 +265,16 @@ bool CollectCdfDetails(XmlNodeRef& xmlnode, const char* szFilename, IResourceCom
 		return false;
 	}
 
-	std::vector<string> dependencies;
+	std::vector<std::pair<string,int32>> dependencies;
 
 	const char* filename;
 	const XmlNodeRef model = cdf->findChild("Model");
 	if (model && model->getAttr("File", &filename))
 	{
-		dependencies.emplace_back(filename);
+		dependencies.emplace_back(filename, 0);
 		if (model->getAttr("Material", &filename))
 		{
-			dependencies.emplace_back(filename);
+			dependencies.emplace_back(filename, 0);
 		}
 	}
 
@@ -285,7 +298,7 @@ bool CollectCdfDetails(XmlNodeRef& xmlnode, const char* szFilename, IResourceCom
 			{
 				if (item->getAttr(szAttr, &filename))
 				{
-					dependencies.emplace_back(filename);
+					dependencies.emplace_back(filename, 0);
 				}
 			}
 		}
@@ -324,20 +337,49 @@ void CMetadataCompiler::EndProcessing()
 
 bool CMetadataCompiler::Process()
 {
-	const string sourceFilename = m_CC.GetSourcePath();
-	const string metadataFilename = IAssetManager::GetMetadataFilename(sourceFilename);
+	const string filename = m_CC.GetSourcePath();
+	const string metadataFilename = IAssetManager::GetMetadataFilename(filename);
+
+	// If source file does not exist, ignore it.
+	if (!FileUtil::FileExists(filename))
+	{
+		if (!m_CC.config->GetAsBool("skipmissing", false, true))
+		{
+			RCLogWarning("File does not exist: %s", filename.c_str());
+		}
+		return true;
+	}
 
 	if (m_CC.config->GetAsBool("stripMetadata", false, true))
 	{
 		return DeleteFileIfExists(metadataFilename);
 	}
 
+	string sourceFilename;
 	std::vector<string> files;
 
-	const char* szExt = PathUtil::GetExt(sourceFilename.c_str());
+	const char* szExt = PathUtil::GetExt(filename.c_str());
 	if (stricmp(szExt, "dds") == 0)
 	{
-		files = FindDdsAssetFiles(sourceFilename);
+		files = FindDdsAssetFiles(filename);
+
+		// try to resolve source file
+		string tifFilename = PathUtil::ReplaceExtension(filename.c_str(), "tif");
+		if (FileUtil::FileExists(tifFilename))
+		{
+			sourceFilename = tifFilename;
+		}
+		else
+		{
+			// try to resolve source file in output folder
+			tifFilename = PathUtil::Make(m_CC.GetOutputFolder(), 
+				PathUtil::ReplaceExtension(PathUtil::GetFile(filename), "tif"));
+			if (FileUtil::FileExists(tifFilename))
+			{
+				sourceFilename = tifFilename;
+			}
+		} 
+
 	}
 	else if (!stricmp(szExt, "cgf") || !stricmp(szExt, "cga") || !stricmp(szExt, "skin"))
 	{
@@ -346,7 +388,7 @@ bool CMetadataCompiler::Process()
 		{
 			if (FileUtil::FileExists(metadataFilename.c_str()))
 			{
-				files.emplace_back(sourceFilename);
+				files.emplace_back(filename);
 			}
 			else
 			{
@@ -355,15 +397,15 @@ bool CMetadataCompiler::Process()
 		}
 		else
 		{
-			files = FindCgfAssetFiles(sourceFilename);
+			files = FindCgfAssetFiles(filename);
 		}
 	}
 	else
 	{
-		files.emplace_back(sourceFilename);
+		files.emplace_back(filename);
 	}
 
-	return m_pResourceCompiler->GetAssetManager()->SaveCryasset(m_CC.config, "", files, m_CC.GetOutputFolder());
+	return m_pResourceCompiler->GetAssetManager()->SaveCryasset(m_CC.config, sourceFilename, files, m_CC.GetOutputFolder());
 }
 
 const char* CMetadataCompiler::GetExt(int index) const

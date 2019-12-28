@@ -2,6 +2,7 @@
 #include "EnvironmentProbeComponent.h"
 
 #include <Cry3DEngine/IRenderNode.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <CryCore/ToolsHelpers/ResourceCompilerHelper.inl>
 #include <CryCore/ToolsHelpers/EngineSettingsManager.inl>
 #include <CryCore/ToolsHelpers/SettingsManagerHelpers.inl>
@@ -52,7 +53,7 @@ void CEnvironmentProbeComponent::Initialize()
 	}
 #endif
 
-	if (m_generation.m_bAutoLoad && m_generation.m_generatedCubemapPath.value.size() > 0)
+	if (m_generation.m_bAutoLoad && m_generation.m_generatedCubemapPath.value.size() > 0 && gEnv->pRenderer != nullptr)
 	{
 		LoadFromDisk(m_generation.m_generatedCubemapPath);
 	}
@@ -62,7 +63,7 @@ void CEnvironmentProbeComponent::Initialize()
 	}
 }
 
-void CEnvironmentProbeComponent::ProcessEvent(SEntityEvent& event)
+void CEnvironmentProbeComponent::ProcessEvent(const SEntityEvent& event)
 {
 	if (event.event == ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED)
 	{
@@ -70,13 +71,13 @@ void CEnvironmentProbeComponent::ProcessEvent(SEntityEvent& event)
 	}
 }
 
-uint64 CEnvironmentProbeComponent::GetEventMask() const
+Cry::Entity::EventFlags CEnvironmentProbeComponent::GetEventMask() const
 {
-	return BIT64(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED);
+	return ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED;
 }
 
 #ifndef RELEASE
-void CEnvironmentProbeComponent::Render(const IEntity& entity, const IEntityComponent& component, SEntityPreviewContext &context) const
+void CEnvironmentProbeComponent::Render(const IEntity& entity, const IEntityComponent& component, SEntityPreviewContext& context) const
 {
 	if (context.bSelected)
 	{
@@ -87,7 +88,9 @@ void CEnvironmentProbeComponent::Render(const IEntity& entity, const IEntityComp
 
 		if (m_generation.pSelectionObject != nullptr)
 		{
-			SRenderingPassInfo passInfo = SRenderingPassInfo::CreateGeneralPassRenderingInfo(gEnv->p3DEngine->GetRenderingCamera());
+			const SRenderingPassInfo& passInfo = *context.pPassInfo;
+
+			gEnv->pRenderer->EF_StartEf(passInfo);
 
 			SRendParams rp;
 			rp.AmbientColor = ColorF(0.0f, 0.0f, 0.0f, 1);

@@ -1,4 +1,4 @@
-﻿// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System;
 using CryEngine.Common;
@@ -14,9 +14,17 @@ namespace CryEngine.Animations
 	/// </summary>
 	public sealed class Character
 	{
+		[SerializeValue]
 		internal ICharacterInstance NativeHandle { get; private set; }
 
+		[SerializeValue]
 		private IAttachmentManager _attachmentManager;
+
+		public ECharRenderFlags Flags
+		{
+			get { return (ECharRenderFlags)NativeHandle.GetFlags(); }
+			set { NativeHandle.SetFlags((int)value); }
+		}
 
 		/// <summary>
 		/// The scale at which animation play on this <see cref="Character"/> .
@@ -101,11 +109,7 @@ namespace CryEngine.Animations
 
 		internal Character(ICharacterInstance nativeCharacter)
 		{
-			if(nativeCharacter == null)
-			{
-				throw new ArgumentNullException(nameof(nativeCharacter));
-			}
-			NativeHandle = nativeCharacter;
+			NativeHandle = nativeCharacter ?? throw new ArgumentNullException(nameof(nativeCharacter));
 		}
 
 		/// <summary>
@@ -149,11 +153,10 @@ namespace CryEngine.Animations
 		/// </summary>
 		public void Release()
 		{
-			var skeleton = NativeHandle.GetISkeletonAnim();
+			var skeleton = NativeHandle?.GetISkeletonAnim();
 			if(skeleton != null)
 			{
-				var values = Enum.GetValues(typeof(EMotionParamID)) as int[];
-				if(values != null)
+				if(Enum.GetValues(typeof(EMotionParamID)) is int[] values)
 				{
 					foreach(var value in values)
 					{

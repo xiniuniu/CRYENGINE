@@ -1,53 +1,54 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <CryString/CryString.h>
-#include <IAudioConnection.h>
-#include "AudioAssets.h"
-#include <CrySystem/XML/IXml.h>
-#include <ACETypes.h>
+#include "Control.h"
 
+#if defined (USE_BACKWARDS_COMPATIBILITY)
 namespace ACE
 {
-class CAudioAssetsManager;
-
-class CAudioControlsLoader
+// This file is deprecated and only used for backwards compatibility. It will be removed with CE 5.7.
+class CAudioControlsLoader final
 {
 public:
-	CAudioControlsLoader(CAudioAssetsManager* pAssetsManager);
-	std::set<string> GetLoadedFilenamesList();
-	void             LoadAll();
-	void             LoadControls();
-	void             LoadScopes();
-	uint             GetErrorCodeMask() const { return m_errorCodeMask; }
+
+	CAudioControlsLoader(CAudioControlsLoader const&) = delete;
+	CAudioControlsLoader(CAudioControlsLoader&&) = delete;
+	CAudioControlsLoader& operator=(CAudioControlsLoader const&) = delete;
+	CAudioControlsLoader& operator=(CAudioControlsLoader&&) = delete;
+
+	CAudioControlsLoader() = default;
+
+	FileNames GetLoadedFilenamesList();
+	void      LoadAll(bool const loadOnlyDefaultControls = false);
+	void      LoadControls(string const& folderPath);
 
 private:
-	typedef std::vector<const char*> SwitchStates;
-	void           LoadAllLibrariesInFolder(const string& folderPath, const string& level);
-	void           LoadControlsLibrary(XmlNodeRef pRoot, const string& filepath, const string& level, const string& filename, uint version);
-	CAudioControl* LoadControl(XmlNodeRef pNode, Scope scope, uint version, IAudioAsset* pParentItem);
 
-	void           LoadPreloadConnections(XmlNodeRef pNode, CAudioControl* pControl, uint version);
-	void           LoadConnections(XmlNodeRef root, CAudioControl* pControl);
+	bool      LoadAllLibrariesInFolder(string const& folderPath, string const& level);
+	void      LoadControlsLibrary(XmlNodeRef const& rootNode, string const& filepath, string const& level, string const& filename, uint8 const version);
+	CControl* LoadControl(XmlNodeRef const& node, CryAudio::ContextId const contextId, uint8 const version, CAsset* const pParentItem);
+	CControl* LoadDefaultControl(XmlNodeRef const& node, CryAudio::ContextId const contextId, CAsset* const pParentItem);
 
-	void           CreateDefaultControls();
-	void           CreateDefaultSwitch(IAudioAsset* pLibrary, const char* szExternalName, const char* szInternalName, const SwitchStates& states);
+	void      LoadPreloadConnections(XmlNodeRef const& node, CControl* const pControl, uint8 const version);
+	void      LoadConnections(XmlNodeRef const& rootNode, CControl* const pControl);
 
-	void           LoadScopesImpl(const string& path);
+	void      LoadEditorData(XmlNodeRef const& node, CAsset& library);
+	void      LoadLibraryEditorData(XmlNodeRef const& node, CAsset& library);
+	void      LoadAllFolders(XmlNodeRef const& node, CAsset& library);
+	void      LoadFolderData(XmlNodeRef const& node, CAsset& parentAsset);
+	void      LoadAllControlsEditorData(XmlNodeRef const& node);
+	void      LoadControlsEditorData(XmlNodeRef const& node);
 
-	void           LoadEditorData(XmlNodeRef pEditorDataNode, IAudioAsset* pRootItem);
-	void           LoadAllFolders(XmlNodeRef pRootFoldersNode, IAudioAsset* pParentItem);
-	void           LoadFolderData(XmlNodeRef pRootFoldersNode, IAudioAsset* pParentItem);
+	CAsset*   AddUniqueFolderPath(CAsset* pParent, QString const& path);
 
-	IAudioAsset*   AddUniqueFolderPath(IAudioAsset* pParent, const QString& path);
+	static string const s_controlsLevelsFolder;
+	static string const s_assetsFolderPath;
+	FileNames           m_loadedFilenames;
+	bool                m_loadOnlyDefaultControls = false;
 
-	static const string ms_controlsLevelsFolder;
-	static const string ms_levelsFolder;
-	// TODO: Move these strings to Utils
-
-	CAudioAssetsManager* m_pAssetsManager;
-	std::set<string>     m_loadedFilenames;
-	uint                 m_errorCodeMask;
+	FileNames           m_defaultTriggerNames { CryAudio::g_szGetFocusTriggerName, CryAudio::g_szLoseFocusTriggerName, CryAudio::g_szMuteAllTriggerName, CryAudio::g_szUnmuteAllTriggerName };
+	FileNames           m_defaultParameterNames { "absolute_velocity", "object_speed", "relative_velocity", "object_doppler" };
 };
-}
+}      // namespace ACE
+#endif //  USE_BACKWARDS_COMPATIBILITY

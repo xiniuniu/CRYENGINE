@@ -1,4 +1,4 @@
-﻿// Copyright 2001-2017 Crytek GmbH / CrytekGroup. All rights reserved.
+﻿// Copyright 2001-2019 Crytek GmbH / CrytekGroup. All rights reserved.
 
 using System;
 using System.Runtime.CompilerServices;
@@ -7,15 +7,25 @@ namespace CryEngine
 {
 	namespace Debug.MathHelpers
 	{
+		/// <summary>
+		/// Helper class for calculations that involve epsilon.
+		/// </summary>
 		public static class EpsilonData
 		{
 			// The float.Epsilon can be flushed to 0 in certain cases. That's why a slightly higher value is used instead in those cases.
 			internal const float MagicNumber = 1.175494E-37f;
 			internal const float FloatMinVal = float.Epsilon;
-			public static bool IsDeNormalizedFloatEnabled = (double)FloatMinVal == 0.0d;
+
+			/// <summary>
+			/// Determines whether floats are normalized to zero. If the minimal value is flushed to zero we use a slightly bigger number for Epsilon instead.
+			/// </summary>
+			public static bool IsDeNormalizedFloatEnabled = FloatMinVal == 0.0d;
 		}
 	}
 
+	/// <summary>
+	/// Helper class for common math operations.
+	/// </summary>
 	public static class MathHelpers
 	{
 		/// <summary>
@@ -58,7 +68,20 @@ namespace CryEngine
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public static float Clamp(float value, float min, float max)
 		{
-			return Math.Min(Math.Max(min, value), max);
+			if(min > max)
+			{
+				ThrowMinMaxException(min, max);
+			}
+
+			if(value < min)
+			{
+				return min;
+			}
+			else if(value > max)
+			{
+				return max;
+			}
+			return value;
 		}
 
 		/// <summary>
@@ -71,7 +94,20 @@ namespace CryEngine
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public static int Clamp(int value, int min, int max)
 		{
-			return Math.Min(Math.Max(min, value), max);
+			if(min > max)
+			{
+				ThrowMinMaxException(min, max);
+			}
+			
+			if(value < min)
+			{
+				return min;
+			}
+			else if(value > max)
+			{
+				return max;
+			}
+			return value;
 		}
 
 		/// <summary>
@@ -82,7 +118,15 @@ namespace CryEngine
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public static float Clamp01(float value)
 		{
-			return Math.Min(Math.Max(0.0f, value), 1.0f);
+			if(value < 0.0f)
+			{
+				return 0.0f;
+			}
+			else if(value > 1.0f)
+			{
+				return 1.0f;
+			}
+			return value;
 		}
 
 		/// <summary>
@@ -263,7 +307,14 @@ namespace CryEngine
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public static float Lerp(float a , float b, float t)
 		{
-			t = Math.Max(Math.Min(1.0f, t), 0f);
+			if(t < 0.0f)
+			{
+				t = 0.0f;
+			}
+			else if(t > 1.0f)
+			{
+				t = 1.0f;
+			}
 			return LerpUnclamped(a, b, t);
 		}
 
@@ -305,5 +356,10 @@ namespace CryEngine
 			t = Repeat(t, length * 2.0f);
 			return length - Math.Abs(t - length);
 		}
-	}
+
+		private static void ThrowMinMaxException<T>(T min, T max)
+		{
+			throw new ArgumentException(string.Format("{0} and {1} are invalid values for min and max! Make sure that min is always smaller than max.", min, max));
+		}
+}
 }

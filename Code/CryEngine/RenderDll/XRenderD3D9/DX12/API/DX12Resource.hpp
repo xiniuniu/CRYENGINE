@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -90,16 +90,21 @@ public:
 	{
 		return m_pSwapChainOwner != NULL;
 	}
-	ILINE void VerifyBackBuffer() const
+	ILINE void VerifyBackBuffer(bool bWrite) const
 	{
 		DX12_ASSERT((!IsBackBuffer() || !GetDX12SwapChain()->IsPresentScheduled()), "Flush didn't dry out all outstanding Present() calls!");
-		DX12_ASSERT((!IsBackBuffer() || GetD3D12Resource() == GetDX12SwapChain()->GetCurrentBackBuffer().GetD3D12Resource()), "Resource is referring to old swapchain index!");
+		DX12_ASSERT((!IsBackBuffer() || !bWrite || GetD3D12Resource() == GetDX12SwapChain()->GetCurrentBackBuffer().GetD3D12Resource()), "Target Resource is referring to previous swapchain index!");
+		DX12_ASSERT((!IsBackBuffer() ||  bWrite || GetD3D12Resource() != GetDX12SwapChain()->GetCurrentBackBuffer().GetD3D12Resource()), "Source Resource is referring to current swapchain index!");
 	}
 
 	// Utility functions
 	ILINE bool IsCompressed() const
 	{
 		return m_bCompressed;
+	}
+	ILINE bool IsPersistentMappable() const
+	{
+		return m_HeapType != D3D12_HEAP_TYPE_READBACK;
 	}
 	ILINE bool IsOffCard() const
 	{
@@ -203,7 +208,7 @@ public:
 	template<const bool bCheckCVar = true>
 	ILINE bool IsConcurrentWritable() const
 	{
-		return m_bConcurrentWritable & !(bCheckCVar && !CRenderer::CV_r_D3D12AsynchronousCompute);
+		return m_bConcurrentWritable & !(bCheckCVar && !GetCVarD3D12AsynchronousComputeValue());
 	}
 	ILINE void MakeConcurrentWritable(bool bCW)
 	{
@@ -224,6 +229,7 @@ public:
 	bool                  NeedsTransitionBarrier(CCommandList* pCmdList, const CView& view, D3D12_RESOURCE_STATES desiredState, bool bPrepare = false) const;
 	D3D12_RESOURCE_STATES DecayTransitionBarrier(CCommandList* pCmdList, D3D12_RESOURCE_STATES desiredState);
 	D3D12_RESOURCE_STATES TransitionBarrier(CCommandList* pCmdList, D3D12_RESOURCE_STATES desiredState);
+	D3D12_RESOURCE_STATES TransitionBarrierStatic(CCommandList* pCmdList, D3D12_RESOURCE_STATES desiredState, D3D12_RESOURCE_STATES& eCurrentState) const;
 	D3D12_RESOURCE_STATES TransitionBarrier(CCommandList* pCmdList, const CView& view, D3D12_RESOURCE_STATES desiredState);
 	D3D12_RESOURCE_STATES BeginTransitionBarrier(CCommandList* pCmdList, D3D12_RESOURCE_STATES desiredState);
 	D3D12_RESOURCE_STATES BeginTransitionBarrier(CCommandList* pCmdList, const CView& view, D3D12_RESOURCE_STATES desiredState);
@@ -243,7 +249,6 @@ public:
 	UINT64 SetFenceValue(UINT64 fenceValue, const int id, const int type) threadsafe
 	{
 		// Check submitted completed fence
-		UINT64 utilizedValue = fenceValue;
 		UINT64 previousValue = m_FenceValues[type][id];
 
 	#define DX12_FREETHREADED_RESOURCES
@@ -376,6 +381,7 @@ public:
 
 protected:
 	void DiscardInitialData();
+	int GetCVarD3D12AsynchronousComputeValue() const;
 
 	// Never changes after construction
 	D3D12_RESOURCE_DESC m_Desc;
@@ -393,6 +399,7 @@ protected:
 	bool m_bReusableResource;
 
 	// Potentially changes on every resource-use
+	D3D12_RESOURCE_STATES m_eInitialState;
 	D3D12_RESOURCE_STATES m_eCurrentState;
 	D3D12_RESOURCE_STATES m_eAnnouncedState;
 	std::vector<D3D12_RESOURCE_STATES> m_SubresourceStates;

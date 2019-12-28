@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -61,8 +61,8 @@ public:
 	}
 
 	// overrides ref count behavior as auto reg nodes are statically allocated.
-	virtual void AddRef() override final {}
-	virtual void Release() override final {}
+	virtual void AddRef() const override final {}
+	virtual void Release() const override final {}
 
 	virtual void Reset() override   {}
 
@@ -106,7 +106,7 @@ public:
 		}
 		else
 		{
-			CRY_ASSERT_MESSAGE(false, "Unsupported CloneType!");
+			CRY_ASSERT(false, "Unsupported CloneType!");
 		}
 	}
 

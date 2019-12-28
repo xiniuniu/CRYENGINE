@@ -1,13 +1,13 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ModelProperties.h"
 
-#include <Serialization/QPropertyTree/QPropertyTree.h>
+#include <Serialization/QPropertyTreeLegacy/QPropertyTreeLegacy.h>
 
 #include <QAbstractItemView>
 
-CModelProperties::CModelProperties(QPropertyTree* pPropertyTree)
+CModelProperties::CModelProperties(QPropertyTreeLegacy* pPropertyTree)
 	: m_pInspectedModel(nullptr)
 	, m_pPropertyTree(pPropertyTree)
 {
@@ -38,7 +38,10 @@ void CModelProperties::AttachSelectionToPropertyTree(QAbstractItemModel* pModel,
 		if (pSerializer)
 		{
 			structs.emplace_back(pSerializer->m_sstruct);
-			m_serializedObjects.emplace_back(pSerializer->m_pObject);
+			if (pSerializer->m_pObject)
+			{
+				m_serializedObjects.emplace_back(pSerializer->m_pObject);
+			}
 		}
 	}
 	m_pPropertyTree->attach(structs);
@@ -51,7 +54,7 @@ std::unique_ptr<CModelProperties::SSerializer> CModelProperties::GetSerializer(Q
 	for (const auto& createSerializerFunc : m_createSerializerFuncs)
 	{
 		std::unique_ptr<SSerializer> pSerializer(createSerializerFunc(pModel, modelIndex));
-		if (pSerializer)
+		if (pSerializer && pSerializer->m_sstruct.pointer())
 		{
 			return pSerializer;
 		}

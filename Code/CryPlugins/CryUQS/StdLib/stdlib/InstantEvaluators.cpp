@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryAISystem/IAISystem.h>
@@ -123,12 +123,14 @@ namespace UQS
 		CInstantEvaluator_TestLocationInNavMesh::CInstantEvaluator_TestLocationInNavMesh()
 		{
 			m_pNavSys = gEnv->pAISystem->GetNavigationSystem();
-			assert(m_pNavSys);
+			CRY_ASSERT(m_pNavSys);
 		}
 
 		Client::IInstantEvaluator::ERunStatus CInstantEvaluator_TestLocationInNavMesh::DoRun(const SRunContext& runContext, const SParams& params) const
 		{
-			const bool bIsInNavMesh = m_pNavSys->IsLocationValidInNavigationMesh(params.navigationAgentTypeID, params.locationToTest.value);
+			//TODO: Get Navmesh query filter from somewhere
+			INavMeshQueryFilter* pQueryFilter = nullptr;
+			const bool bIsInNavMesh = m_pNavSys->IsLocationValidInNavigationMesh(params.navigationAgentTypeID, params.locationToTest.value, pQueryFilter);
 			runContext.evaluationResult.bDiscardItem = !bIsInNavMesh;
 			return ERunStatus::Finished;
 		}

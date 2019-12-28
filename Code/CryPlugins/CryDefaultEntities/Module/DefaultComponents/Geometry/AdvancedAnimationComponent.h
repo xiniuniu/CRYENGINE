@@ -4,10 +4,10 @@
 
 #include <bitset>
 
-#include <CryGame/IGameFramework.h>
 #include <ICryMannequin.h>
 #include <CrySchematyc/Utils/SharedString.h>
 #include <CryCore/Containers/CryArray.h>
+#include <CryGame/IGameFramework.h>
 
 #include <Animation/PoseAligner/PoseAligner.h>
 
@@ -50,9 +50,13 @@ protected:
 	// IEntityComponent
 	virtual void   Initialize() override;
 
-	virtual void   ProcessEvent(SEntityEvent& event) override;
-	virtual uint64 GetEventMask() const override;
+	virtual void   ProcessEvent(const SEntityEvent& event) override;
+	virtual Cry::Entity::EventFlags GetEventMask() const override;
 	// ~IEntityComponent
+
+	// IEditorEntityComponent
+	virtual bool SetMaterial(int slotId, const char* szMaterial) override;
+	// ~IEditorEntityComponent
 
 public:
 	struct SDefaultScopeSettings
@@ -82,8 +86,11 @@ public:
 		desc.SetIcon("icons:General/Mannequin.ico");
 		desc.SetComponentFlags({ IEntityComponent::EFlags::Transform, IEntityComponent::EFlags::Socket, IEntityComponent::EFlags::Attach });
 
+		desc.AddBase<IEditorEntityComponent>();
+
 		desc.AddMember(&CAdvancedAnimationComponent::m_type, 'type', "Type", "Type", "Determines the behavior of the static mesh", EMeshType::RenderAndCollider);
 		desc.AddMember(&CAdvancedAnimationComponent::m_characterFile, 'file', "Character", "Character", "Determines the character to load", "");
+		desc.AddMember(&CAdvancedAnimationComponent::m_materialPath, 'mat', "Material", "Material", "Specifies the override material for the selected object", "");
 		desc.AddMember(&CAdvancedAnimationComponent::m_renderParameters, 'rend', "Render", "Rendering Settings", "Settings for the rendered representation of the component", SRenderParameters());
 
 		desc.AddMember(&CAdvancedAnimationComponent::m_databasePath, 'dbpa', "DatabasePath", "Animation Database", "Path to the Mannequin .adb file", "");
@@ -121,8 +128,8 @@ public:
 			return;
 		}
 
-		const TagID fragmentId = m_pAnimationContext->controllerDef.m_fragmentIDs.Find(fragmentName.c_str());
-		if (fragmentId == TAG_ID_INVALID)
+		FragmentID fragmentId = m_pAnimationContext->controllerDef.m_fragmentIDs.Find(fragmentName.c_str());
+		if (fragmentId == FRAGMENT_ID_INVALID)
 		{
 			CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_ERROR, "Failed to find Mannequin fragment %s in controller definition %s", fragmentName.c_str(), m_pAnimationContext->controllerDef.m_filename.c_str());
 			return;
@@ -147,6 +154,15 @@ public:
 		m_pActiveAction = new TAction<SAnimationContext>(priority, fragmentId);
 		m_pActionController->Queue(*m_pActiveAction);
 	}
+	
+	virtual void QueueCustomFragment(IAction& action)
+	{
+		CRY_ASSERT(m_pActionController != nullptr);
+		if (m_pActionController != nullptr)
+		{
+			m_pActionController->Queue(action);
+		}
+	}
 
 	// TODO: Expose resource selector for tags
 	virtual void SetTag(const Schematyc::CSharedString& tagName, bool bSet)
@@ -166,20 +182,37 @@ public:
 
 	TagID GetTagId(const char* szTagName) const
 	{
+		CRY_ASSERT(m_pControllerDefinition != nullptr);
+		if (m_pControllerDefinition == nullptr)
+		{
+			return TAG_ID_INVALID;
+		}
+
 		return m_pControllerDefinition->m_tags.Find(szTagName);
 	}
 
 	FragmentID GetFragmentId(const char* szFragmentName) const
 	{
+		CRY_ASSERT(m_pControllerDefinition != nullptr);
+		if (m_pControllerDefinition == nullptr)
+		{
+			return FRAGMENT_ID_INVALID;
+		}
+
 		return m_pControllerDefinition->m_fragmentIDs.Find(szFragmentName);
 	}
 
 	virtual void SetTagWithId(TagID id, bool bSet)
 	{
-		m_pAnimationContext->state.Set(id, bSet);
+		CRY_ASSERT(m_pAnimationContext != nullptr);
+		if (m_pAnimationContext != nullptr)
+		{
+			m_pAnimationContext->state.Set(id, bSet);
+		}
 	}
 
 	ICharacterInstance* GetCharacter() const { return m_pCachedCharacter; }
+	IActionController* GetActionController() const { return m_pActionController; }
 
 	// Loads character and mannequin data from disk
 	virtual void LoadFromDisk()
@@ -251,7 +284,16 @@ public:
 			return;
 		}
 
-		m_pEntity->SetCharacter(m_pCachedCharacter, GetOrMakeEntitySlotId() | ENTITY_SLOT_ACTUAL, false);
+		m_pEntity->SetCharacter(m_pCachedCharacter, GetOrMakeEntitySlotId(), false);
+
+		if (!m_materialPath.value.empty())
+		{
+			if (IMaterial* pMaterial = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial(m_materialPath.value, false))
+			{
+				m_pEntity->SetSlotMaterial(GetEntitySlotId(), pMaterial);
+			}
+		}
+
 		SetAnimationDrivenMotion(m_bAnimationDrivenMotion);
 
 		if (m_pControllerDefinition != nullptr)
@@ -293,8 +335,8 @@ public:
 	}
 	bool         IsAnimationDrivenMotionEnabled() const { return m_bAnimationDrivenMotion; }
 
-	virtual void SetCharacterFile(const char* szPath);
-	const char*  SetCharacterFile() const                  { return m_characterFile.value.c_str(); }
+	virtual void SetCharacterFile(const char* szPath, bool applyImmediately = true);
+	const char*  GetCharacterFile() const                  { return m_characterFile.value.c_str(); }
 	virtual void SetMannequinAnimationDatabaseFile(const char* szPath);
 	const char*  GetMannequinAnimationDatabaseFile() const { return m_databasePath.value.c_str(); }
 
@@ -319,6 +361,7 @@ protected:
 
 	Schematyc::CharacterFileName              m_characterFile;
 	Schematyc::MannequinAnimationDatabasePath m_databasePath;
+	Schematyc::MaterialFileName               m_materialPath;
 
 	SDefaultScopeSettings                     m_defaultScopeSettings;
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -28,6 +28,9 @@ CCloudBlockerRenderNode::~CCloudBlockerRenderNode()
 
 void CCloudBlockerRenderNode::SetMatrix(const Matrix34& mat)
 {
+	if (m_position == mat.GetTranslation())
+		return;
+
 	m_position = mat.GetTranslation();
 	m_WSBBox.SetTransformedAABB(mat, AABB(1.0f));
 
@@ -43,6 +46,8 @@ void CCloudBlockerRenderNode::OffsetPosition(const Vec3& delta)
 
 void CCloudBlockerRenderNode::Render(const struct SRendParams& EntDrawParams, const SRenderingPassInfo& passInfo)
 {
+	DBG_LOCK_TO_THREAD(this);
+
 	// recursive pass isn't supported currently.
 	if (!passInfo.RenderClouds() || passInfo.IsRecursivePass())
 	{
@@ -66,9 +71,4 @@ void CCloudBlockerRenderNode::SetProperties(const SCloudBlockerProperties& prope
 	m_decayEnd = properties.decayEnd;
 	m_decayInfluence = properties.decayInfluence;
 	m_bScreenspace = properties.bScreenspace;
-}
-
-void CCloudBlockerRenderNode::FillBBox(AABB& aabb)
-{
-	aabb = CCloudBlockerRenderNode::GetBBox();
 }

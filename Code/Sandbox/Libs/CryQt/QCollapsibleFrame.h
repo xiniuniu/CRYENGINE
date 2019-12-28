@@ -1,27 +1,19 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
-#pragma once
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
-#include <QWidget>
-#include <QToolButton>
-#include <QBoxLayout>
-#include <QPushButton>
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QStyleOption>
-#include <QEvent>
-#include <QMouseEvent>
-#include <QMimeData>
-#include <QApplication>
-#include <QDrag>
+#pragma once
 
 #include "CryIcon.h"
 #include "CryQtAPI.h"
-#include "CryQtCompatibility.h"
-#include <memory>
+
+#include <QWidget>
+
 #include <functional>
 
-class QPushButton;
+class QEvent;
+class QFrame;
 class QLabel;
+class QPushButton;
+class QToolButton;
 
 //! This is a reusable UI component used for grouping widgets together with a title and the group can be collapsed
 class CRYQT_API QCollapsibleFrame : public QWidget
@@ -30,13 +22,14 @@ class CRYQT_API QCollapsibleFrame : public QWidget
 
 	friend class CCollapsibleFrameHeader;
 public:
-	QCollapsibleFrame() {}
-	explicit QCollapsibleFrame(QWidget* pParent);
+	explicit QCollapsibleFrame(QWidget* pParent = nullptr);
 	explicit QCollapsibleFrame(const QString& title, QWidget* pParent = nullptr);
 	virtual ~QCollapsibleFrame();
 
 	QWidget* GetWidget() const;
 	QWidget* GetDragHandler() const;
+
+	//! Sets or replaces the widget in the frame. The previous widget will be queued for deletion.
 	void     SetWidget(QWidget* pWidget);
 	void	 SetClosable(bool closable);
 	bool	 Closable() const;

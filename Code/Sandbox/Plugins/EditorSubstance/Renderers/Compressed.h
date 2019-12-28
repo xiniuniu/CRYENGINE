@@ -1,3 +1,5 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 #include "Base.h"
 #include "EditorSubstanceManager.h"
@@ -27,7 +29,7 @@ namespace EditorSubstance
 
 			CCompressedRenderer();
 			virtual void FillVirtualOutputRenderData(const ISubstancePreset* preset, const SSubstanceOutput& output, std::vector<SSubstanceRenderData>& renderData) override;
-			virtual void FillOriginalOutputRenderData(const ISubstancePreset* preset, SSubstanceOutput& output, std::vector<SSubstanceRenderData>& renderData) override {};
+			virtual void FillOriginalOutputRenderData(const ISubstancePreset* preset, SSubstanceOutput& output, std::vector<SSubstanceRenderData>& renderData) override {}
 			virtual void ProcessComputedOutputs() override;
 			virtual void RemovePresetRenderData(ISubstancePreset* preset) override;
 		protected:
@@ -44,4 +46,3 @@ namespace EditorSubstance
 
 	} // END namespace Renderers
 } // END namespace EditorSubstance
-

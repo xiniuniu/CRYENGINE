@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 // #SchematycTODO : Move serialization utils to separate header?
 
@@ -52,6 +52,11 @@ template<Serialization::ResourceSelector<string>(* SELECTOR)(string&)> struct SR
 		return value == rhs.value;
 	}
 
+	inline bool operator!=(const SResourceNameSelector& rhs) const
+	{
+		return value != rhs.value;
+	}
+
 	string value;
 };
 
@@ -89,16 +94,16 @@ inline void ReflectType(CTypeDesc<GeomCacheFileName>& desc)
 	desc.SetDescription("Path to an alembic file");
 }
 
-typedef SerializationUtils::SResourceNameSerializer<&Serialization::GeomPath> GeomFileName;
+typedef SerializationUtils::SResourceNameSelector<&Serialization::StaticModelFilename<string>> GeomFileName;
 
 inline void ReflectType(CTypeDesc<GeomFileName>& desc)
 {
 	desc.SetGUID("bd6f2953-1127-4cdd-bfe7-79f98c97058c"_cry_guid);
-	desc.SetLabel("GeomFileName");
-	desc.SetDescription("Geometry file name");
+	desc.SetLabel("StaticGeomFileName");
+	desc.SetDescription("Static geometry file name");
 }
 
-typedef SerializationUtils::SResourceNameSerializer<&Serialization::SkinName> SkinName;
+typedef SerializationUtils::SResourceNameSelector<&Serialization::SkinnedMeshFilename<string>> SkinName;
 
 inline void ReflectType(CTypeDesc<SkinName>& desc)
 {
@@ -116,13 +121,31 @@ inline void ReflectType(CTypeDesc<CharacterFileName>& desc)
 	desc.SetDescription("Character file name");
 }
 
+typedef SerializationUtils::SResourceNameSelector<&Serialization::ModelFilename<string>> AnyModelFileName;
+
+inline void ReflectType(CTypeDesc<AnyModelFileName>& desc)
+{
+	desc.SetGUID("{51398F30-C0DD-41F6-9391-8F70755442C0}"_cry_guid);
+	desc.SetLabel("Model Filename");
+	desc.SetDescription("Model file name");
+}
+
+typedef SerializationUtils::SResourceNameSelector<&Serialization::AnyAnimationPath<string>> AnyLowLevelAnimationName;
+
+inline void ReflectType(CTypeDesc<AnyLowLevelAnimationName>& desc)
+{
+	desc.SetGUID("{429CCE3A-9F51-4C1E-85D8-C5BDE0E8C4B2}"_cry_guid);
+	desc.SetLabel("Any Animation Name");
+	desc.SetDescription("Name of an animation exported to the engine (.caf / .anm)");
+}
+
 typedef SerializationUtils::SResourceNameSelector<&Serialization::AnimationPath<string>> LowLevelAnimationName;
 
 inline void ReflectType(CTypeDesc<LowLevelAnimationName>& desc)
 {
 	desc.SetGUID("{7BAA3267-E7BB-4B02-A223-2CB03F6BF35A}"_cry_guid);
 	desc.SetLabel("Animation Name");
-	desc.SetDescription("Name of an animation exported to the engine");
+	desc.SetDescription("Name of an animation exported to the engine (.caf)");
 }
 
 typedef SerializationUtils::SResourceNameSelector<&Serialization::ParticlePicker<string>> ParticleEffectName;
@@ -134,6 +157,43 @@ inline void ReflectType(CTypeDesc<ParticleEffectName>& desc)
 	desc.SetDescription("Particle effect name");
 }
 
+// Audio
+typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioEnvironment<string>> AudioEnvironmentName;
+
+inline void ReflectType(CTypeDesc<AudioEnvironmentName>& desc)
+{
+	desc.SetGUID("C312E1D3-D31F-4509-A92F-644965E2BD6F"_cry_guid);
+	desc.SetLabel("AudioEnvironmentName");
+	desc.SetDescription("Audio Environment name");
+}
+
+typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioPreloadRequest<string>> AudioPreloadRequestName;
+
+inline void ReflectType(CTypeDesc<AudioPreloadRequestName>& desc)
+{
+	desc.SetGUID("A1AD3BA1-FCD0-4CE0-99FB-A77736E897FE"_cry_guid);
+	desc.SetLabel("AudioPreloadRequestName");
+	desc.SetDescription("Audio Preload Request name");
+}
+
+typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioSetting<string>> AudioSettingName;
+
+inline void ReflectType(CTypeDesc<AudioSettingName>& desc)
+{
+	desc.SetGUID("75A36F04-B6AB-4A36-AB2C-84F426C2D2FD"_cry_guid);
+	desc.SetLabel("AudioSettingName");
+	desc.SetDescription("Audio setting name");
+}
+
+typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioParameter<string>> AudioParameterName;
+
+inline void ReflectType(CTypeDesc<AudioParameterName>& desc)
+{
+	desc.SetGUID("730c191c-531f-48ae-bba9-5c1d8216b701"_cry_guid);
+	desc.SetLabel("AudioParameterName");
+	desc.SetDescription("Audio Parameter name");
+}
+
 typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioSwitch<string>> AudioSwitchName;
 
 inline void ReflectType(CTypeDesc<AudioSwitchName>& desc)
@@ -143,23 +203,33 @@ inline void ReflectType(CTypeDesc<AudioSwitchName>& desc)
 	desc.SetDescription("Audio switch name");
 }
 
+typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioState<string>> AudioStateName;
+
+inline void ReflectType(CTypeDesc<AudioStateName>& desc)
+{
+	desc.SetGUID("1877be04-a1db-490c-b6a2-47f99cac7fc2"_cry_guid);
+	desc.SetLabel("AudioStateName");
+	desc.SetDescription("Audio state name");
+}
+
 typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioSwitchState<string>> AudioSwitchStateName;
 
 inline void ReflectType(CTypeDesc<AudioSwitchStateName>& desc)
 {
-	desc.SetGUID("1877be04-a1db-490c-b6a2-47f99cac7fc2"_cry_guid);
+	desc.SetGUID("517D230B-332F-4474-8352-9497A6FA371C"_cry_guid);
 	desc.SetLabel("AudioSwitchStateName");
 	desc.SetDescription("Audio switch state name");
 }
 
-typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioRTPC<string>> AudioRtpcName;
+typedef SerializationUtils::SResourceNameSelector<&Serialization::AudioTrigger<string>> AudioTriggerName;
 
-inline void ReflectType(CTypeDesc<AudioRtpcName>& desc)
+inline void ReflectType(CTypeDesc<AudioTriggerName>& desc)
 {
-	desc.SetGUID("730c191c-531f-48ae-bba9-5c1d8216b701"_cry_guid);
-	desc.SetLabel("AudioRtpcName");
-	desc.SetDescription("Audio Rtpc name");
+	desc.SetGUID("A4A3C724-3A78-4F10-9184-3ECEB03C55BA"_cry_guid);
+	desc.SetLabel("AudioTriggerName");
+	desc.SetDescription("Audio Trigger name");
 }
+// ~Audio
 
 typedef SerializationUtils::SResourceNameSelector<&Serialization::DialogName<string>> DialogName;
 

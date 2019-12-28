@@ -3,6 +3,8 @@
 #include <CrySchematyc/MathTypes.h>
 #include <CrySchematyc/Reflection/TypeDesc.h>
 #include <CrySchematyc/Env/IEnvRegistrar.h>
+#include <CryPhysics/physinterface.h>
+#include "PointConstraint.h"
 
 class CPlugin_CryDefaultEntities;
 
@@ -12,6 +14,9 @@ namespace Cry
 	{
 		class CPlaneConstraintComponent
 			: public IEntityComponent
+#ifndef RELEASE
+			, public IEntityComponentPreviewer
+#endif
 		{
 		protected:
 			friend CPlugin_CryDefaultEntities;
@@ -20,12 +25,23 @@ namespace Cry
 			// IEntityComponent
 			virtual void Initialize() final;
 
-			virtual void ProcessEvent(SEntityEvent& event) final;
-			virtual uint64 GetEventMask() const final;
+			virtual void ProcessEvent(const SEntityEvent& event) final;
+			virtual Cry::Entity::EventFlags GetEventMask() const final;
+
+			virtual void OnShutDown() final;
 			// ~IEntityComponent
 
+#ifndef RELEASE
+			// IEntityComponentPreviewer
+			virtual IEntityComponentPreviewer* GetPreviewer() final { return this; }
+
+			virtual void SerializeProperties(Serialization::IArchive& archive) final {}
+			virtual void Render(const IEntity& entity, const IEntityComponent& component, SEntityPreviewContext &context) const final;
+			// ~IEntityComponentPreviewer
+#endif
+
 		public:
-			virtual ~CPlaneConstraintComponent();
+			virtual ~CPlaneConstraintComponent() = default;
 
 			static void ReflectType(Schematyc::CTypeDesc<CPlaneConstraintComponent>& desc)
 			{
@@ -37,17 +53,18 @@ namespace Cry
 				desc.SetComponentFlags({ IEntityComponent::EFlags::Transform, IEntityComponent::EFlags::Socket, IEntityComponent::EFlags::Attach });
 
 				desc.AddMember(&CPlaneConstraintComponent::m_bActive, 'actv', "Active", "Active", "Whether or not the constraint should be added on component reset", true);
-				desc.AddMember(&CPlaneConstraintComponent::m_axis, 'axis', "Axis", "Axis", "Axis around which the physical entity is constrained", Vec3(0.f, 0.f, 1.f));
 
-				desc.AddMember(&CPlaneConstraintComponent::m_limitMin, 'lmin', "LimitMinX", "Minimum Limit X", nullptr, 0.f);
-				desc.AddMember(&CPlaneConstraintComponent::m_limitMax, 'lmax', "LimitMaxX", "Maximum Limit X", nullptr, 1.f);
-				desc.AddMember(&CPlaneConstraintComponent::m_limitMinY, 'lmiy', "LimitMinY", "Minimum Limit Y", nullptr, 0.f);
-				desc.AddMember(&CPlaneConstraintComponent::m_limitMaxY, 'lmay', "LimitMaxY", "Maximum Limit Y", nullptr, 1.f);
-
+				desc.AddMember(&CPlaneConstraintComponent::m_limitMin, 'lmin', "LimitMinX", "Twist rotation min angle", nullptr, -360.0_degrees);
+				desc.AddMember(&CPlaneConstraintComponent::m_limitMax, 'lmax', "LimitMaxX", "Twist rotation max angle", nullptr, 360.0_degrees);
+				desc.AddMember(&CPlaneConstraintComponent::m_limitMaxY, 'lmay', "LimitMaxY", "Bend max angle", nullptr, 0.0_degrees);
+				desc.AddMember(&CPlaneConstraintComponent::m_axis, 'axi', "Axis", "Axis", nullptr, Vec3(0, 0, 1));
+				desc.AddMember(&CPlaneConstraintComponent::m_bFreePosition, 'fpos', "FreePos", "Free Position", "Only affect constrain relative rotation; leave the position free", false);
 				desc.AddMember(&CPlaneConstraintComponent::m_damping, 'damp', "Damping", "Damping", nullptr, 0.f);
+
+				desc.AddMember(&CPlaneConstraintComponent::m_attacher, 'atch', "Attacher", "Attachment Parameters", nullptr, SConstraintAttachment());
 			}
 
-			virtual void ConstrainToEntity(Schematyc::ExplicitEntityId targetEntityId, bool bDisableCollisionsWith, bool bAllowRotation)
+			virtual void ConstrainToEntity(Schematyc::ExplicitEntityId targetEntityId, bool bDisableCollisionsWith)
 			{
 				if ((EntityId)targetEntityId != INVALID_ENTITYID)
 				{
@@ -55,18 +72,18 @@ namespace Cry
 					{
 						if (IPhysicalEntity* pPhysicalEntity = pTargetEntity->GetPhysicalEntity())
 						{
-							ConstrainTo(pPhysicalEntity, bDisableCollisionsWith, bAllowRotation);
+							ConstrainTo(pPhysicalEntity, bDisableCollisionsWith);
 						}
 					}
 				}
 			}
 
-			virtual void ConstrainToPoint(bool bAllowRotation)
+			virtual void ConstrainToPoint()
 			{
-				ConstrainTo(WORLD_ENTITY, false, bAllowRotation);
+				ConstrainTo(WORLD_ENTITY, false);
 			}
 
-			virtual void ConstrainTo(IPhysicalEntity* pOtherEntity, bool bDisableCollisionsWith = false, bool bAllowRotation = true)
+			virtual void ConstrainTo(IPhysicalEntity* pOtherEntity, bool bDisableCollisionsWith = false, IPhysicalEntity *pHelperEnt = nullptr)
 			{
 				if (m_constraintIds.size() > 0)
 				{
@@ -76,7 +93,7 @@ namespace Cry
 				if (IPhysicalEntity* pConstraintOwner = m_pEntity->GetPhysicalEntity())
 				{
 					// Constraints can only be added to rigid-based entities
-					if (pConstraintOwner->GetType() != PE_RIGID && pConstraintOwner->GetType() != PE_WHEELEDVEHICLE)
+					if (pConstraintOwner->GetType() != PE_RIGID && pConstraintOwner->GetType() != PE_WHEELEDVEHICLE && pConstraintOwner->GetType() != PE_ARTICULATED)
 					{
 						if (pOtherEntity == WORLD_ENTITY)
 						{
@@ -91,7 +108,7 @@ namespace Cry
 
 #ifndef RELEASE
 						// Validate the same check again
-						if (pConstraintOwner->GetType() != PE_RIGID && pConstraintOwner->GetType() != PE_WHEELEDVEHICLE)
+						if (pConstraintOwner->GetType() != PE_RIGID && pConstraintOwner->GetType() != PE_WHEELEDVEHICLE && pConstraintOwner->GetType() != PE_ARTICULATED)
 						{
 							CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_WARNING, "Tried to add plane constraint to non-rigid or vehicle entities!");
 							return;
@@ -102,32 +119,25 @@ namespace Cry
 					Matrix34 slotTransform = GetWorldTransformMatrix();
 
 					pe_action_add_constraint constraint;
-					constraint.flags = world_frames | constraint_no_tears | constraint_plane;
+					constraint.flags = world_frames | constraint_no_tears | constraint_plane | (m_bFreePosition ? constraint_free_position : 0) | (bDisableCollisionsWith ? constraint_ignore_buddy : 0);
 					constraint.pt[0] = constraint.pt[1] = slotTransform.GetTranslation();
 					constraint.qframe[0] = constraint.qframe[1] = Quat(slotTransform) * Quat::CreateRotationV0V1(Vec3(1, 0, 0), m_axis);
-					constraint.xlimits[0] = m_limitMin;
-					constraint.xlimits[1] = m_limitMax;
-					constraint.yzlimits[0] = m_limitMinY;
-					constraint.yzlimits[1] = m_limitMaxY;
+					constraint.xlimits[0] = m_limitMin.ToRadians();
+					constraint.xlimits[1] = m_limitMax.ToRadians();
+					constraint.yzlimits[0] = 0;
+					constraint.yzlimits[1] = m_limitMaxY.ToRadians();
 					constraint.damping = m_damping;
+					if (pHelperEnt) constraint.pConstraintEntity = pHelperEnt;
+					constraint.pBuddy = pOtherEntity;
 
-					if (!bAllowRotation)
+					if (!constraint.xlimits[0] && !constraint.xlimits[1] && !constraint.yzlimits[1])
 					{
 						constraint.flags |= constraint_no_rotation;
 					}
-
-					if (bDisableCollisionsWith && pOtherEntity != WORLD_ENTITY && pOtherEntity != pConstraintOwner)
+					else if ((constraint.xlimits[1] - constraint.xlimits[0]) > gf_PI * 1.99f && constraint.yzlimits[1] > gf_PI * 0.99f)
 					{
-						constraint.flags |= constraint_ignore_buddy | constraint_inactive;
-
-						constraint.pBuddy = pConstraintOwner;
-						pOtherEntity->Action(&constraint);
-						m_constraintIds.emplace_back(gEnv->pPhysicalWorld->GetPhysicalEntityId(pOtherEntity), pConstraintOwner->Action(&constraint));
-
-						constraint.flags &= ~constraint_inactive;
+						MARK_UNUSED constraint.xlimits[0], constraint.xlimits[1], constraint.yzlimits[0], constraint.yzlimits[1];
 					}
-
-					constraint.pBuddy = pOtherEntity;
 
 					int ownerId = gEnv->pPhysicalWorld->GetPhysicalEntityId(pConstraintOwner);
 					m_constraintIds.emplace_back(ownerId, pConstraintOwner->Action(&constraint));
@@ -146,6 +156,8 @@ namespace Cry
 						pPhysicalEntity->Action(&constraint);
 					}
 				}
+
+				m_constraintIds.clear();
 			}
 
 			virtual void Activate(bool bActivate)
@@ -154,15 +166,15 @@ namespace Cry
 
 				m_pEntity->UpdateComponentEventMask(this);
 			}
+
 			bool IsActive() const { return m_bActive; }
 
-			virtual void SetLimitsX(float minLimit, float maxLimit) { m_limitMin = minLimit; m_limitMax = maxLimit; }
-			float GetMinimumLimitX() const { return m_limitMin; }
-			float GetMaximumLimitX() const { return m_limitMax; }
+			virtual void SetLimitsX(CryTransform::CAngle minLimit, CryTransform::CAngle maxLimit) { m_limitMin = minLimit; m_limitMax = maxLimit; }
+			CryTransform::CAngle GetMinimumLimitX() const { return m_limitMin; }
+			CryTransform::CAngle GetMaximumLimitX() const { return m_limitMax; }
 
-			virtual void SetLimitsY(float minLimit, float maxLimit) { m_limitMinY = minLimit; m_limitMaxY = maxLimit; }
-			float GetMinimumLimitY() const { return m_limitMinY; }
-			float GetMaximumLimitY() const { return m_limitMaxY; }
+			virtual void SetLimitsY(CryTransform::CAngle maxLimit) { m_limitMaxY = maxLimit; }
+			CryTransform::CAngle GetMaximumLimitY() const { return m_limitMaxY; }
 
 			virtual void SetDamping(float damping) { m_damping = damping; }
 			float GetDamping() const { return m_damping; }
@@ -173,13 +185,15 @@ namespace Cry
 		protected:
 			bool m_bActive = true;
 			Vec3 m_axis = Vec3(0, 0, 1);
+			bool m_bFreePosition = false;
 
-			Schematyc::Range<-10000, 10000> m_limitMin = 0.f;
-			Schematyc::Range<-10000, 10000> m_limitMax = 1.f;
-			Schematyc::Range<-10000, 10000> m_limitMinY = 0.f;
-			Schematyc::Range<-10000, 10000> m_limitMaxY = 1.f;
+			CryTransform::CClampedAngle<-360, 360>  m_limitMin = -360.0_degrees;
+			CryTransform::CClampedAngle<-360, 360>  m_limitMax = 360.0_degrees;
+			CryTransform::CClampedAngle<0, 180>  m_limitMaxY = 0.0_degrees;
 
 			Schematyc::Range<-10000, 10000> m_damping = 0.f;
+
+			SConstraintAttachment m_attacher;
 
 			// Key = physical entity id, value = constraint id
 			std::vector<std::pair<int, int>> m_constraintIds;

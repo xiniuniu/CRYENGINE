@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ScriptBrowserWidget.h"
@@ -16,7 +16,6 @@
 #include <QToolbar>
 #include <QWidgetAction>
 
-#include <QParentWndWidget.h>
 #include <QPushButton.h>
 #include <QSearchBox.h>
 #include <QAdvancedTreeView.h>
@@ -79,10 +78,9 @@ const char* g_szClipboardPrefix = "[schematyc_xml]";
 
 const CItemModelAttribute CScriptBrowserModel::s_columnAttributes[] =
 {
-	CItemModelAttribute("Name",            eAttributeType_String, CItemModelAttribute::Visible,      false, ""),
-	CItemModelAttribute("_sort_string_",   eAttributeType_String, CItemModelAttribute::AlwaysHidden, false, ""),
-	CItemModelAttribute("_filter_string_", eAttributeType_String, CItemModelAttribute::AlwaysHidden, false, "")
-};
+	CItemModelAttribute("Name",            &Attributes::s_stringAttributeType, CItemModelAttribute::Visible,      false, ""),
+	CItemModelAttribute("_sort_string_",   &Attributes::s_stringAttributeType, CItemModelAttribute::AlwaysHidden, false, ""),
+	CItemModelAttribute("_filter_string_", &Attributes::s_stringAttributeType, CItemModelAttribute::AlwaysHidden, false, "") };
 
 class CScriptElementFilterProxyModel : public QDeepFilterProxyModel
 {
@@ -1223,14 +1221,14 @@ CScriptBrowserWidget::CScriptBrowserWidget(CrySchematycEditor::CMainWindow& edit
 	m_pFilter = new QSearchBox(this);
 	m_pFilter->EnableContinuousSearch(true);
 	m_pFilter->setPlaceholderText("Search");
-	m_pFilter->signalOnFiltered.Connect(this, &CScriptBrowserWidget::OnFiltered);
+	m_pFilter->signalOnSearch.Connect(this, &CScriptBrowserWidget::OnFiltered);
 
 	m_pAddButton->setMenu(m_pAddMenu);
 	m_pAddButton->setEnabled(false);
 
-	QObject::connect(m_pTreeView, SIGNAL(clicked(const QModelIndex &)), this, SLOT(OnTreeViewClicked(const QModelIndex &)));
-	QObject::connect(m_pTreeView, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(OnTreeViewCustomContextMenuRequested(const QPoint &)));
-	QObject::connect(m_pTreeView, SIGNAL(keyPress(QKeyEvent*, bool&)), this, SLOT(OnTreeViewKeyPress(QKeyEvent*, bool&)));
+	QObject::connect(m_pTreeView, SIGNAL(clicked(const QModelIndex&)), this, SLOT(OnTreeViewClicked(const QModelIndex&)));
+	QObject::connect(m_pTreeView, SIGNAL(customContextMenuRequested(const QPoint&)), this, SLOT(OnTreeViewCustomContextMenuRequested(const QPoint&)));
+	QObject::connect(m_pTreeView, SIGNAL(keyPress(QKeyEvent*,bool&)), this, SLOT(OnTreeViewKeyPress(QKeyEvent*,bool&)));
 
 	QWidget::startTimer(500);
 }
@@ -1848,8 +1846,6 @@ void CScriptBrowserWidget::OnRemoveItem()
 					{
 						if (szElementType && m_pModel)
 						{
-							Schematyc::IScriptElement* pRootElement = m_pModel->GetRootElement();
-
 							GetIEditor()->GetIUndoManager()->Begin();
 							stack_string desc("Added ");
 							desc.append(szElementType);
@@ -1864,8 +1860,7 @@ void CScriptBrowserWidget::OnRemoveItem()
 
 					if (CBroadcastManager* pBroadcastManager = CBroadcastManager::Get(this))
 					{
-						PopulateInspectorEvent popEvent([](CInspector& inspector) {});
-						pBroadcastManager->Broadcast(popEvent);
+						ClearLegacyInspectorEvent().Broadcast(pBroadcastManager);
 					}
 				}
 			}
@@ -1928,7 +1923,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::Enum);
-			  });
+				});
 		}
 		/*if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::Struct, pScriptScope))
 		   {
@@ -1942,7 +1937,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::Signal);
-			  });
+				});
 		}
 		if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::Function, pScriptScope))
 		{
@@ -1950,7 +1945,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::Function);
-			  });
+				});
 		}
 		/*if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::Interface, pScriptScope))
 		   {
@@ -1988,7 +1983,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::StateMachine);
-			  });
+				});
 		}
 		if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::State, pScriptScope))
 		{
@@ -1996,7 +1991,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::State);
-			  });
+				});
 		}
 		if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::Variable, pScriptScope))
 		{
@@ -2004,7 +1999,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::Variable);
-			  });
+				});
 		}
 		/*if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::Property, pScriptScope))
 		   {
@@ -2018,7 +2013,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::Timer);
-			  });
+				});
 		}
 		if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::SignalReceiver, pScriptScope))
 		{
@@ -2026,7 +2021,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::SignalReceiver);
-			  });
+				});
 		}
 		/*if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::InterfaceImpl, pScriptScope))
 		   {
@@ -2040,7 +2035,7 @@ void CScriptBrowserWidget::PopulateAddMenu(QMenu* pMenu, IScriptElement* pScript
 			QObject::connect(pAction, &QAction::triggered, [this, pScriptScope]()
 				{
 					OnAddItem(pScriptScope, EScriptElementType::ComponentInstance);
-			  });
+				});
 		}
 	}
 }
@@ -2061,7 +2056,7 @@ void CScriptBrowserWidget::PopulateFilterMenu(QMenu* pMenu, EFilterType filterTy
 					QObject::connect(pAction, &QAction::triggered, [this, pRootElement]()
 						{
 							OnAddItem(pRootElement, EScriptElementType::Enum);
-					  });
+						});
 				}
 
 				/*if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::Struct, pScriptScope))
@@ -2083,7 +2078,7 @@ void CScriptBrowserWidget::PopulateFilterMenu(QMenu* pMenu, EFilterType filterTy
 					QObject::connect(pAction, &QAction::triggered, [this, pRootElement]()
 						{
 							OnAddItem(pRootElement, EScriptElementType::Variable);
-					  });
+						});
 				}
 
 				if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::Timer, pRootElement))
@@ -2092,7 +2087,7 @@ void CScriptBrowserWidget::PopulateFilterMenu(QMenu* pMenu, EFilterType filterTy
 					QObject::connect(pAction, &QAction::triggered, [this, pRootElement]()
 						{
 							OnAddItem(pRootElement, EScriptElementType::Timer);
-					  });
+						});
 				}
 				break;
 			}
@@ -2105,7 +2100,7 @@ void CScriptBrowserWidget::PopulateFilterMenu(QMenu* pMenu, EFilterType filterTy
 					QObject::connect(pAction, &QAction::triggered, [this, pRootElement]()
 						{
 							OnAddItem(pRootElement, EScriptElementType::Signal);
-					  });
+						});
 				}
 				break;
 			}
@@ -2117,7 +2112,7 @@ void CScriptBrowserWidget::PopulateFilterMenu(QMenu* pMenu, EFilterType filterTy
 					QObject::connect(pAction, &QAction::triggered, [this, pRootElement]()
 						{
 							OnAddItem(pRootElement, EScriptElementType::Function);
-					  });
+						});
 				}
 				if (ScriptBrowserUtils::CanAddScriptElement(EScriptElementType::SignalReceiver, pRootElement))
 				{
@@ -2125,7 +2120,7 @@ void CScriptBrowserWidget::PopulateFilterMenu(QMenu* pMenu, EFilterType filterTy
 					QObject::connect(pAction, &QAction::triggered, [this, pRootElement]()
 						{
 							OnAddItem(pRootElement, EScriptElementType::SignalReceiver);
-					  });
+						});
 				}
 				break;
 			}
@@ -2151,7 +2146,7 @@ void CScriptBrowserWidget::PopulateFilterMenu(QMenu* pMenu, EFilterType filterTy
 					QObject::connect(pAction, &QAction::triggered, [this, pRootElement]()
 						{
 							OnAddItem(pRootElement, EScriptElementType::ComponentInstance);
-					  });
+						});
 				}
 				break;
 			}

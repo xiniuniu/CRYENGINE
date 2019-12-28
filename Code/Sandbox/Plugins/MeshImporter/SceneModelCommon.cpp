@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "SceneModelCommon.h"
@@ -232,8 +232,6 @@ void CSceneModelCommon::SetScene(FbxTool::CScene* pScene)
 	ClearSceneWithoutReset();
 
 	m_pFbxScene = pScene;
-
-	const FbxTool::SNode* const pFbxRootNode = m_pFbxScene->GetRootNode();
 
 	m_pRoot = CreateSceneFromSourceScene(*m_pScene, *m_pFbxScene);
 

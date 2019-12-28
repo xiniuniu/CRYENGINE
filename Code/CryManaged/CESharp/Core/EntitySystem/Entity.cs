@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -22,6 +22,7 @@ namespace CryEngine
 		/// <summary>
 		/// Gets the unique identifier associated with this entity
 		/// </summary>
+		[SerializeValue]
 		public EntityId Id { get; internal set; }
 
 		/// <summary>
@@ -269,9 +270,26 @@ namespace CryEngine
 			}
 		}
 
+		/// <summary>
+		/// Get or sets the entity flags of this <see cref="Entity"/>. When setting the flags it completely replaces all flags which are already set in the entity.
+		/// </summary>
+		public EntityFlags Flags
+		{
+			get
+			{
+				return (EntityFlags)NativeHandle.GetFlags();
+			}
+			set
+			{
+				NativeHandle.SetFlags((uint)value);
+			}
+		}
+
+		[SerializeValue]
 		internal IEntity NativeHandle { get; set; }
 
-		private IntPtr NativeEntityPointer { get; set; }
+		[SerializeValue]
+		internal IntPtr NativeEntityPointer { get; set; }
 
 
 		#endregion
@@ -337,7 +355,7 @@ namespace CryEngine
 		/// <returns></returns>
 		public T AddComponent<T>() where T : EntityComponent, new()
 		{
-            var componentTypeGUID = EntityComponent.GetComponentTypeGUID<T>();
+			var componentTypeGUID = EntityComponent.GetComponentTypeGUID<T>();
 
 			return NativeInternals.Entity.AddComponent(NativeEntityPointer, componentTypeGUID.hipart, componentTypeGUID.lopart) as T;
 		}
@@ -347,18 +365,16 @@ namespace CryEngine
 		/// </summary>
 		public T GetComponent<T>() where T : EntityComponent
 		{
-            var componentTypeGUID = EntityComponent.GetComponentTypeGUID<T>();
+			var componentTypeGUID = EntityComponent.GetComponentTypeGUID<T>();
 
-            return NativeInternals.Entity.GetComponent(NativeEntityPointer, componentTypeGUID.hipart, componentTypeGUID.lopart) as T;
+			return NativeInternals.Entity.GetComponent(NativeEntityPointer, componentTypeGUID.hipart, componentTypeGUID.lopart) as T;
 		}
 
 		private EntityComponent[] GetComponents(Type type)
 		{
-            var componentTypeGUID = EntityComponent.GetComponentTypeGUID(type);
-            
-			EntityComponent[] baseComponents;
+			var componentTypeGUID = EntityComponent.GetComponentTypeGUID(type);
 
-			NativeInternals.Entity.GetComponents(NativeEntityPointer, componentTypeGUID.hipart, componentTypeGUID.lopart, out baseComponents);
+			NativeInternals.Entity.GetComponents(NativeEntityPointer, componentTypeGUID.hipart, componentTypeGUID.lopart, out EntityComponent[] baseComponents);
 
 			return baseComponents;
 		}
@@ -368,7 +384,7 @@ namespace CryEngine
 		/// </summary>
 		/// <returns>Every <see cref="EntityComponent"/> that matches the type <typeparamref name="T"/>.</returns>
 		/// <typeparam name="T">The type the components have to match.</typeparam>
-		public List<T> GetComponents<T>() where T: EntityComponent
+		public List<T> GetComponents<T>() where T : EntityComponent
 		{
 			var baseComponents = GetComponents(typeof(T));
 
@@ -462,9 +478,9 @@ namespace CryEngine
 		/// <returns></returns>
 		public T GetOrCreateComponent<T>() where T : EntityComponent, new()
 		{
-            var componentTypeGUID = EntityComponent.GetComponentTypeGUID<T>();
+			var componentTypeGUID = EntityComponent.GetComponentTypeGUID<T>();
 
-            return NativeInternals.Entity.GetOrCreateComponent(NativeEntityPointer, componentTypeGUID.hipart, componentTypeGUID.lopart) as T;
+			return NativeInternals.Entity.GetOrCreateComponent(NativeEntityPointer, componentTypeGUID.hipart, componentTypeGUID.lopart) as T;
 		}
 
 		/// <summary>
@@ -487,11 +503,11 @@ namespace CryEngine
 		{
 			var entity = NativeHandle;
 
-			var flags = !keepWorldTransform ? 0 : (int)IEntity.EAttachmentFlags.ATTACHMENT_KEEP_TRANSFORMATION;
+			uint flags = !keepWorldTransform ? 0 : (uint)IEntity.EAttachmentFlags.ATTACHMENT_KEEP_TRANSFORMATION;
 			entity.DetachThis(flags);
 			if(parent != null)
 			{
-				parent.AttachChild(this, new SChildAttachParams(flags));
+				parent.AttachChild(this, new SChildAttachParams((int)flags));
 			}
 		}
 
@@ -588,6 +604,26 @@ namespace CryEngine
 		}
 
 		/// <summary>
+		/// Load a primitive geometry shape from the engine-assets.
+		/// </summary>
+		/// <param name="slot"></param>
+		/// <param name="primitiveShape"></param>
+		public void LoadGeometry(int slot, Primitives primitiveShape)
+		{
+			string[] urls = new string[]
+			{
+				"%ENGINE%/EngineAssets/Objects/primitive_box.cgf",
+				"%ENGINE%/EngineAssets/Objects/primitive_cube.cgf",
+				"%ENGINE%/EngineAssets/Objects/primitive_cylinder.cgf",
+				"%ENGINE%/EngineAssets/Objects/primitive_plane.cgf",
+				"%ENGINE%/EngineAssets/Objects/primitive_pyramid.cgf",
+				"%ENGINE%/EngineAssets/Objects/primitive_sphere.cgf"
+			};
+
+			NativeHandle.LoadGeometry(slot, urls[(int)primitiveShape]);
+		}
+
+		/// <summary>
 		/// Loads a character to the specified slot, or to next available slot.
 		/// If same character is already loaded in this slot, operation is ignored.
 		/// If this slot number is occupied by a different kind of object it is overwritten.
@@ -615,6 +651,11 @@ namespace CryEngine
 			return new Character(nativeCharacter);
 		}
 
+		/// <summary>
+		/// Set the flags for a specific slot.
+		/// </summary>
+		/// <param name="slot"></param>
+		/// <param name="flags"></param>
 		public void SetSlotFlag(int slot, EntitySlotFlags flags)
 		{
 			NativeHandle.SetSlotFlags(slot, (uint)flags);
@@ -651,6 +692,34 @@ namespace CryEngine
 			viewDistanceRatio = MathHelpers.Clamp01(viewDistanceRatio);
 
 			NativeHandle.SetViewDistRatio((int)(viewDistanceRatio * 255));
+		}
+
+		/// <summary>
+		/// Adds one or more flags to the current set of entity flags (bitwise OR).
+		/// </summary>
+		/// <param name="flags">Combination of <see cref="EntityFlags"/> to add.</param>
+		public void AddFlags(EntityFlags flags)
+		{
+			NativeHandle.AddFlags((uint)flags);
+		}
+
+		/// <summary>
+		/// Removes one or more flags from the current set of entity flags (bitwise AND NOT).
+		/// </summary>
+		/// <param name="flags">Combination of <see cref="EntityFlags"/> to remove.</param>
+		public void ClearFlags(EntityFlags flags)
+		{
+			NativeHandle.ClearFlags((uint)flags);
+		}
+
+		/// <summary>
+		/// Checks if the specified entity flags are set.
+		/// </summary>
+		/// <param name="flags">Combination of <see cref="EntityFlags"/> to check.</param>
+		/// <returns><c>true</c> if the flags are set, <c>false</c> otherwise.</returns>
+		public bool CheckFlags(EntityFlags flags)
+		{
+			return NativeHandle.CheckFlags((uint)flags);
 		}
 	}
 }

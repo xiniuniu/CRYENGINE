@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -37,7 +37,7 @@ struct SMetaData;
 struct ICharacterInstance;
 struct IPhysicalEntity;
 
-class QPropertyTree;
+class QPropertyTreeLegacy;
 
 class QTemporaryDir;
 
@@ -88,6 +88,7 @@ public:
 	virtual int          GetOpenFileFormatFlags() override { return eFileFormat_CHR; }
 
 	virtual void         AssignScene(const SImportScenePayload* pUserData) override;
+	virtual void         UnloadScene() override;
 
 	virtual const char*  GetDialogName() const override;
 	virtual bool         MayUnloadScene() override { return true; }
@@ -148,7 +149,7 @@ private:
 	std::unique_ptr<Private_DialogCHR::SViewSettings> m_pViewSettings;
 	CSplitViewportContainer*                    m_pViewportContainer;
 	Private_DialogCHR::CPreviewModeWidget* m_pPreviewModeWidget;
-	QPropertyTree* m_pPropertyTree;
+	QPropertyTreeLegacy* m_pPropertyTree;
 	std::unique_ptr<CModelProperties> m_pModelProperties;
 };
 

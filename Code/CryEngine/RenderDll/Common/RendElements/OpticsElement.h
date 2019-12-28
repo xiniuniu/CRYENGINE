@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -52,8 +52,9 @@ public:
 		SPreparePrimitivesContext(CPrimitiveRenderPass& targetPass, std::vector<CPrimitiveRenderPass*>& prePasses)
 			: pass(targetPass)
 			, prePasses(prePasses)
-			, viewInfoCount(0)
+			, pGraphicsPipeline(nullptr)
 			, pViewInfo(nullptr)
+			, viewInfoCount(0)
 			, lightWorldPos(ZERO)
 		{
 			ZeroStruct(auxParams);
@@ -63,7 +64,8 @@ public:
 		CPrimitiveRenderPass&                       pass;
 		std::vector<CPrimitiveRenderPass*>&         prePasses;
 
-		const CStandardGraphicsPipeline::SViewInfo* pViewInfo;
+		CGraphicsPipeline*                          pGraphicsPipeline;
+		const SRenderViewInfo*                      pViewInfo;
 		int                                         viewInfoCount;
 
 		Vec3                                        lightWorldPos;
@@ -197,12 +199,14 @@ public:
 		return m_globalColor.a > LensOpConst::_LO_MIN && m_globalFlareBrightness > LensOpConst::_LO_MIN;
 	}
 
-	virtual void RenderPreview(SLensFlareRenderParam* pParam, const Vec3& vPos) { assert(0); }
+	virtual void RenderPreview(const SLensFlareRenderParam* pParam, const Vec3& vPos) { assert(0); }
 	virtual bool PreparePrimitives(const SPreparePrimitivesContext& context) { assert(0); return false; }
 
 protected:
 	void         updateXformMatrix();
 	virtual void Invalidate() {}
+
+	virtual void DeleteThis();
 
 public:
 	void SetScale(Vec2 scale)
@@ -245,7 +249,7 @@ public:
 	{
 #ifndef RELEASE
 		iLog->Log("ERROR");
-		__debugbreak();
+		CRY_FUNCTION_NOT_IMPLEMENTED;
 #endif
 		return 0;
 	}
@@ -280,7 +284,7 @@ public:
 	void              ApplyGeneralFlags(uint64& rtFlags);
 	void              ApplyOcclusionBokehFlag(uint64& rtFlags);
 	void              ApplySpectrumTexFlag(uint64& rtFlags, bool enabled);
-	void              ApplyCommonParams(SShaderParamsBase& shaderParams, const SViewport& viewport, const Vec3& lightProjPos, const Vec2& size);
+	void              ApplyCommonParams(SShaderParamsBase& shaderParams, const SRenderViewport& viewport, const Vec3& lightProjPos, const Vec2& size);
 
 
 	virtual EFlareType GetType()       { return eFT__Base__; }

@@ -1,3 +1,5 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 
 #include <AssetSystem/AssetType.h>
@@ -16,5 +18,5 @@ public:
 	virtual bool CanBeEdited() const { return true; }
 	virtual CAssetEditor* Edit(CAsset* pAsset) const override;
 
-	virtual bool OnCreate(CEditableAsset& editAsset, const void* pCreateParams) const override;
+	virtual bool OnCreate(INewAsset& asset, const SCreateParams* pCreateParams) const override;
 };

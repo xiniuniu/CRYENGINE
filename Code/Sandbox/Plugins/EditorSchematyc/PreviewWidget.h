@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -14,8 +14,7 @@ struct SRenderContext;
 struct SMouseEvent;
 // Forward declare classes.
 class QBoxLayout;
-class QParentWndWidget;
-class QAdvancedPropertyTree;
+class QAdvancedPropertyTreeLegacy;
 class QPushButton;
 class QSplitter;
 class QViewport;
@@ -38,14 +37,12 @@ protected:
 	void showEvent(QShowEvent* pEvent);
 
 private:
-	QAdvancedPropertyTree* m_pPropertyTree;
+	QAdvancedPropertyTreeLegacy* m_pPropertyTree;
 };
 
 struct IGizmoTransformOp // #SchematycTODO : Use generalized transform system.
 {
-public:
-
-	virtual ~IGizmoTransformOp() {};
+	virtual ~IGizmoTransformOp() {}
 
 	virtual void OnInit() = 0;
 	virtual void OnMove(const Vec3& offset) = 0;
@@ -91,7 +88,7 @@ public:
 	void       Serialize(Serialization::IArchive& archive);
 
 	// ITransformManipulatorOwner
-	virtual bool GetManipulatorMatrix(RefCoordSys coordSys, Matrix34& tm) override;
+	virtual bool GetManipulatorMatrix(Matrix34& tm) override;
 	virtual void GetManipulatorPosition(Vec3& position) override;
 	// ~ITransformManipulatorOwner
 

@@ -35,8 +35,8 @@ namespace Cry
 			// IEntityComponent
 			virtual void Initialize() final;
 
-			virtual void   ProcessEvent(SEntityEvent& event) final;
-			virtual uint64 GetEventMask() const final;
+			virtual void   ProcessEvent(const SEntityEvent& event) final;
+			virtual Cry::Entity::EventFlags GetEventMask() const final;
 
 #ifndef RELEASE
 			virtual IEntityComponentPreviewer* GetPreviewer() final { return this; }
@@ -80,7 +80,7 @@ namespace Cry
 				{
 					desc.SetGUID("{DB10AB64-7A5B-4B91-BC90-6D692D1D1222}"_cry_guid);
 					desc.AddMember(&CEnvironmentProbeComponent::SOptions::m_bIgnoreVisAreas, 'igvi', "IgnoreVisAreas", "Ignore VisAreas", nullptr, false);
-					desc.AddMember(&CEnvironmentProbeComponent::SOptions::sortPriority, 'spri', "SortPriority", "Sort Priority", nullptr, (uint32)CDLight().m_nSortPriority);
+					desc.AddMember(&CEnvironmentProbeComponent::SOptions::sortPriority, 'spri', "SortPriority", "Sort Priority", nullptr, (uint32)SRenderLight().m_nSortPriority);
 					desc.AddMember(&CEnvironmentProbeComponent::SOptions::m_attenuationFalloffMax, 'atte', "AttenuationFalloffMax", "Maximum Attenuation Falloff", nullptr, 1.f);
 					desc.AddMember(&CEnvironmentProbeComponent::SOptions::m_bAffectsVolumetricFog, 'volf', "AffectVolumetricFog", "Affect Volumetric Fog", nullptr, true);
 					desc.AddMember(&CEnvironmentProbeComponent::SOptions::m_bVolumetricFogOnly, 'volo', "VolumetricFogOnly", "Only Affect Volumetric Fog", nullptr, false);
@@ -89,7 +89,7 @@ namespace Cry
 				}
 
 				bool m_bIgnoreVisAreas = false;
-				uint32 sortPriority = CDLight().m_nSortPriority;
+				uint32 sortPriority = SRenderLight().m_nSortPriority;
 				Schematyc::Range<0, 64000> m_attenuationFalloffMax = 1.f;
 				bool m_bVolumetricFogOnly = false;
 				bool m_bAffectsVolumetricFog = true;
@@ -177,13 +177,13 @@ namespace Cry
 
 				// Now generate the cube map
 				// Render 16x bigger cube map (4x4) - 16x SSAA
-				int renderResolution = (int)m_generation.m_resolution * 4;
+				const auto renderResolution = static_cast<std::size_t>(m_generation.m_resolution) * 4;
+				const auto srcPitch = renderResolution * 4;
+				const auto srcSideSize = renderResolution * srcPitch;
+				const auto sides = 6;
 
-				TArray<unsigned short> vecData;
-				vecData.Reserve(renderResolution * renderResolution * 6 * 4);
-				vecData.SetUse(0);
-
-				if (gEnv->pRenderer->EF_RenderEnvironmentCubeHDR(renderResolution, m_pEntity->GetWorldPos(), vecData))
+				const auto& vecData = gEnv->pRenderer->EF_RenderEnvironmentCubeHDR(renderResolution, m_pEntity->GetWorldPos());
+				if (vecData.size() >= srcSideSize * sides)
 				{
 					TArray<unsigned short> downsampledImageData;
 
@@ -192,15 +192,12 @@ namespace Cry
 
 					downsampledImageData.resize(width * height);
 
-					size_t srcPitch = renderResolution * 4;
-					size_t srcSlideSize = renderResolution * srcPitch;
-
 					size_t dstPitch = (int)m_generation.m_resolution * 4;
-					for (int side = 0; side < 6; ++side)
+					for (int side = 0; side < sides; ++side)
 					{
 						for (uint32 y = 0; y < (uint32)m_generation.m_resolution; ++y)
 						{
-							CryHalf4* pSrcSide = (CryHalf4*)&vecData[side * srcSlideSize];
+							CryHalf4* pSrcSide = (CryHalf4*)&vecData[side * srcSideSize];
 							CryHalf4* pDst = (CryHalf4*)&downsampledImageData[side * dstPitch + y * width];
 							for (uint32 x = 0; x < (uint32)m_generation.m_resolution; ++x)
 							{
@@ -332,7 +329,7 @@ namespace Cry
 
 			virtual bool GetCubemapTextures(const char* path, ITexture** pSpecular, ITexture** pDiffuse, bool bLoadFromDisk = true) const
 			{
-				stack_string specularCubemap = PathUtil::ReplaceExtension(path, ".dds");
+				CryPathString specularCubemap = PathUtil::ReplaceExtension(path, ".dds");
 
 				int strIndex = specularCubemap.find("_diff");
 				if (strIndex >= 0)
@@ -340,13 +337,13 @@ namespace Cry
 					specularCubemap = specularCubemap.substr(0, strIndex) + specularCubemap.substr(strIndex + 5, specularCubemap.length());
 				}
 
-				char diffuseCubemap[ICryPak::g_nMaxPath];
-				cry_sprintf(diffuseCubemap, "%s%s%s.%s", PathUtil::AddSlash(PathUtil::GetPathWithoutFilename(specularCubemap)).c_str(),
+				CryPathString diffuseCubemap;
+				diffuseCubemap.Format("%s%s%s.%s", PathUtil::AddSlash(PathUtil::GetPathWithoutFilename(specularCubemap)).c_str(),
 					PathUtil::GetFileName(specularCubemap).c_str(), "_diff", PathUtil::GetExt(specularCubemap));
 
 				// '\\' in filename causing texture duplication
-				stack_string specularCubemapUnix = PathUtil::ToUnixPath(specularCubemap.c_str());
-				stack_string diffuseCubemapUnix = PathUtil::ToUnixPath(diffuseCubemap);
+				CryPathString specularCubemapUnix = PathUtil::ToUnixPath(specularCubemap.c_str());
+				CryPathString diffuseCubemapUnix = PathUtil::ToUnixPath(diffuseCubemap);
 
 				if (bLoadFromDisk)
 				{
@@ -389,7 +386,7 @@ namespace Cry
 					return;
 				}
 
-				CDLight light;
+				SRenderLight light;
 
 				light.m_nLightStyle = 0;
 				light.SetPosition(ZERO);
@@ -422,6 +419,8 @@ namespace Cry
 
 				if (m_options.m_bAffectsVolumetricFog)
 					light.m_Flags |= DLF_VOLUMETRIC_FOG;
+
+				light.m_nSortPriority = m_options.sortPriority;
 
 				light.SetFalloffMax(m_options.m_attenuationFalloffMax);
 

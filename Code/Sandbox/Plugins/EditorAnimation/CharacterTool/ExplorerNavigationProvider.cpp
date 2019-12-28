@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -10,10 +10,10 @@
 #include "SceneContent.h"
 #include "AnimationList.h"
 #include <IEditor.h>
-#include "../EditorCommon/FileDialogs/EngineFileDialog.h"
+#include "FileDialogs/EngineFileDialog.h"
 
-#include "AssetSystem/Browser/AssetBrowserDialog.h"
 #include "AssetSystem/Asset.h"
+#include "AssetSystem/AssetResourceSelector.h"
 
 namespace CharacterTool
 {
@@ -68,8 +68,10 @@ public:
 	{
 		if (strcmp(type, "Character") == 0) return m_system->characterList.get();
 		if (strcmp(type, "Animation") == 0) return m_system->animationList.get();
+		if (strcmp(type, "AnimationOrBSpace") == 0) return m_system->animationList.get();
 		if (strcmp(type, "AnimationAlias") == 0) return m_system->animationList.get();
 		if (strcmp(type, "Skeleton") == 0) return m_system->skeletonList.get();
+		if (strcmp(type, "SkeletonOrCga") == 0) return m_system->skeletonList.get();
 		if (strcmp(type, "SkeletonParams") == 0) return m_system->skeletonList.get();
 		if (strcmp(type, "CharacterPhysics") == 0) return m_system->physicsList.get();
 		if (strcmp(type, "CharacterRig") == 0) return m_system->rigList.get();
@@ -86,7 +88,9 @@ public:
 	{
 		return strcmp(type, "Character") == 0 ? "Character Definition (cdf)|*.cdf" :
 		       strcmp(type, "Animation") == 0 ? "Animation, BlendSpace (caf, i_caf, bspace, comb)|*.caf;*.i_caf;*.bspace;*.comb" :
+		       strcmp(type, "AnimationOrBSpace") == 0 ? "Animation, BlendSpace (caf, i_caf, bspace, comb)|*.caf;*.i_caf;*.bspace;*.comb" :
 		       strcmp(type, "Skeleton") == 0 ? "Skeleton (skel, chr, cga)|*.skel;*.chr;*.cga" :
+		       strcmp(type, "SkeletonOrCga") == 0 ? "Skeleton (skel, chr, cga)|*.skel;*.chr;*.cga" :
 		       strcmp(type, "SkeletonParams") == 0 ? "Skeleton Parameters (chrparams)|*.chrparams" :
 		       strcmp(type, "CharacterPhysics") == 0 ? "Character Physics (phys)|*.phys" :
 		       strcmp(type, "CharacterRig") == 0 ? "Character Rig (rig)|*.rig" :
@@ -97,7 +101,9 @@ public:
 	{
 		return strcmp(type, "Character") == 0 ? CExtensionFilter("Character Definition (cdf)", "cdf") :
 		       strcmp(type, "Animation") == 0 ? CExtensionFilter("Animation, BlendSpace (caf, i_caf, bspace, comb)", QStringList() << "caf" << "i_caf" << "bspace" << "comb") :
+		       strcmp(type, "AnimationOrBSpace") == 0 ? CExtensionFilter("Animation, BlendSpace (caf, i_caf, bspace, comb)", QStringList() << "caf" << "i_caf" << "bspace" << "comb") :
 		       strcmp(type, "Skeleton") == 0 ? CExtensionFilter("Skeleton (skel, chr, cga)", "skel", "chr", "cga") :
+		       strcmp(type, "SkeletonOrCga") == 0 ? CExtensionFilter("Skeleton (skel, chr, cga)", "skel", "chr", "cga") :
 		       strcmp(type, "SkeletonParams") == 0 ? CExtensionFilter("Skeleton Parameters (chrparams)", "chrparams") :
 		       strcmp(type, "CharacterPhysics") == 0 ? CExtensionFilter("Character Physics (phys)", "phys") :
 		       strcmp(type, "CharacterRig") == 0 ? CExtensionFilter("Character Rig (rig)", "rig") :
@@ -108,21 +114,18 @@ public:
 	{
 		typedef std::vector<string> v;
 		return strcmp(type, "Character") == 0 ? v{ "Character" } :
-			strcmp(type, "Animation") == 0 ? v{ "Animation" } :
-			strcmp(type, "Skeleton") == 0 ? v{ "Skeleton", "AnimatedMesh" } :
-			v();
+		       strcmp(type, "AnimationOrBSpace") == 0 ? v{ "Animation" } :
+		       strcmp(type, "Animation") == 0 ? v{ "Animation" } :
+		       strcmp(type, "Skeleton") == 0 ? v{ "Skeleton" } :
+		       strcmp(type, "SkeletonOrCga") == 0 ? v{ "Skeleton", "AnimatedMesh" } :
+		       v();
 	}
 
 	const char* GetFileSelectorMaskForType(const char* type) const override { return GetMaskForType(type); }
 
-	const char* GetEngineTypeForInputType(const char* extension) const override
+	bool        IsActive(const char* type, const char* path, int index) const override
 	{
-		return strcmp(extension, "i_caf") == 0 ? "caf" : extension;
-	}
-
-	bool IsActive(const char* type, const char* path, int index) const override
-	{
-		if (strcmp(type, "Animation") == 0 && index != -1)
+		if ((strcmp(type, "Animation") == 0 || strcmp(type, "AnimationOrBSpace") == 0) && index != -1)
 			return m_system->scene->layers.activeLayer == index;
 		return false;
 	}
@@ -133,7 +136,7 @@ public:
 			if (m_system->document->IsExplorerEntrySelected(entry))
 				return true;
 		if (m_system->scene->layers.activeLayer == index && index != -1)
-			if (strcmp(type, "Animation") == 0)
+			if (strcmp(type, "Animation") == 0 || strcmp(type, "AnimationOrBSpace") == 0)
 				if (!m_system->document->HasSelectedExplorerEntries())
 					return true;
 		return false;
@@ -150,7 +153,7 @@ public:
 	bool Select(const char* type, const char* path, int index) const override
 	{
 		bool selected = false;
-		if (strcmp(type, "Animation") == 0)
+		if (strcmp(type, "Animation") == 0 || strcmp(type, "AnimationOrBSpace") == 0)
 		{
 			if (index != -1)
 				m_system->scene->layers.activeLayer = index;
@@ -177,6 +180,8 @@ public:
 	bool CanPickFile(const char* type, int index) const override
 	{
 		if (strcmp(type, "Animation") == 0 && index >= 0)
+			return false;
+		if (strcmp(type, "AnimationOrBSpace") == 0 && index >= 0)
 			return false;
 		if (strcmp(type, "AnimationAlias") == 0 && index >= 0)
 			return false;
@@ -206,38 +211,42 @@ Serialization::INavigationProvider* CreateExplorerNavigationProvider(System* sys
 	return new ExplorerNavigationProvider(system);
 }
 
-dll_string FileSelector(const SResourceSelectorContext& x, const char* previousValue)
+SResourceSelectionResult FileSelector(const SResourceSelectorContext& context, const char* previousValue)
 {
 	CEngineFileDialog::RunParams runParams;
 	runParams.initialFile = previousValue;
-	runParams.extensionFilters << ExplorerNavigationProvider::GetExtensionFilterForType(x.typeName);
+	runParams.extensionFilters << ExplorerNavigationProvider::GetExtensionFilterForType(context.typeName);
 	auto qFilename = CEngineFileDialog::RunGameOpen(runParams, nullptr);
 	string filename = qFilename.toLocal8Bit().data();
+	SResourceSelectionResult result{ false, previousValue };
 
 	if (!filename.empty())
-		return filename.c_str();
-	else
-		return previousValue;
+	{
+		result.selectedResource = filename.c_str();
+		result.selectionAccepted = true;
+	}
+
+	return result;
 }
 
-static dll_string AnimationResourceSelector(const SResourceSelectorContext& x, const char* previousValue)
+static SResourceSelectionResult AnimationResourceSelector(const SResourceSelectorContext& context, const char* previousValue)
 {
-	const auto assetTypes = ExplorerNavigationProvider::GetAssetTypesForType(x.typeName);
-	if (GetIEditor()->GetSystem()->GetIConsole()->GetCVar("ed_enableAssetPickers")->GetIVal() && !assetTypes.empty())
+	const auto assetTypes = ExplorerNavigationProvider::GetAssetTypesForType(context.typeName);
+	auto assetPickersEnabled = (EAssetResourcePickerState)GetIEditor()->GetSystem()->GetIConsole()->GetCVar("ed_enableAssetPickers")->GetIVal();
+	if (assetPickersEnabled != EAssetResourcePickerState::Disable && !assetTypes.empty())
 	{
-		return x.SelectFromAsset(assetTypes, previousValue);
+		return SStaticAssetSelectorEntry::SelectFromAsset(context, assetTypes, previousValue);
 	}
 	else
 	{
-		return FileSelector(x, previousValue);
+		return FileSelector(context, previousValue);
 	}
 }
 
-REGISTER_RESOURCE_SELECTOR("Animation", AnimationResourceSelector, "icons:Animation/Animation.ico")
-REGISTER_RESOURCE_SELECTOR("Skeleton", AnimationResourceSelector, "icons:Animation/Skeleton.ico")
-REGISTER_RESOURCE_SELECTOR("SkeletonParams", AnimationResourceSelector, "icons:Animation/Skeleton.ico")
-REGISTER_RESOURCE_SELECTOR("Character", AnimationResourceSelector, "icons:Animation/Character.ico")
-REGISTER_RESOURCE_SELECTOR("CharacterRig", AnimationResourceSelector, "icons:Animation/Rig.ico")
-REGISTER_RESOURCE_SELECTOR("CharacterPhysics", AnimationResourceSelector, "icons:Animation/Physics.ico")
+REGISTER_RESOURCE_SELECTOR("AnimationOrBSpace", AnimationResourceSelector, "icons:common/assets_animation.ico")
+REGISTER_RESOURCE_SELECTOR("SkeletonOrCga", AnimationResourceSelector, "icons:common/animation_skeleton.ico")
+REGISTER_RESOURCE_SELECTOR("SkeletonParams", AnimationResourceSelector, "icons:common/animation_skeleton.ico")
+REGISTER_RESOURCE_SELECTOR("CharacterRig", AnimationResourceSelector, "icons:common/animation_rig.ico")
+REGISTER_RESOURCE_SELECTOR("CharacterPhysics", AnimationResourceSelector, "icons:common/animation_physics.ico")
 
 }

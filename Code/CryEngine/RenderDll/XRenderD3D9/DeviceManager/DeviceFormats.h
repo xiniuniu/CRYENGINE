@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -80,7 +80,6 @@ struct SPixFormat
 
 struct SPixFormatSupport
 {
-	// TODO: make a vector out of it and index by integer instead of storing pointers (64bit vs. 8bit)
 	SPixFormat  m_FormatR1;
 	SPixFormat  m_FormatA8;                          // 8 bit alpha
 	SPixFormat  m_FormatR8;
@@ -118,7 +117,7 @@ struct SPixFormatSupport
 
 	SPixFormat  m_FormatR9G9B9E5;                    // Shared exponent RGB
 
-#if CRY_RENDERER_OPENGL || CRY_RENDERER_VULKAN
+#if CRY_RENDERER_VULKAN
 	SPixFormat  m_FormatEAC_R11;                     // EAC compressed single channel for mobile, unsigned
 	SPixFormat  m_FormatEAC_R11S;                    // EAC compressed single channel for mobile, signed
 	SPixFormat  m_FormatEAC_RG11;                    // EAC compressed dual channel for mobile, unsigned
@@ -151,10 +150,44 @@ struct SPixFormatSupport
 
 	SPixFormat* m_FirstPixelFormat;
 
-	void        CheckFormatSupport();
-	bool        IsFormatSupported(ETEX_Format eTFDst);
-	ETEX_Format GetLessPreciseFormatSupported(ETEX_Format eTFDst);
-	ETEX_Format GetClosestFormatSupported(ETEX_Format eTFDst, const SPixFormat*& pPF);
+public:
+	bool IsFormatSupported(ETEX_Format eTFDst)
+	{
+		return m_FormatSupportedCache[eTFDst];
+	}
+
+	ETEX_Format GetLessPreciseFormatSupported(ETEX_Format eTFDst)
+	{
+		return m_FormatLessPreciseCache[eTFDst];
+	}
+
+	ETEX_Format GetClosestFormatSupported(ETEX_Format eTFDst)
+	{
+		return m_FormatClosestCacheEnm[eTFDst];
+	}
+
+	ETEX_Format GetClosestFormatSupported(ETEX_Format eTFDst, const SPixFormat*& pPF)
+	{
+		pPF  = m_FormatClosestCachePtr[eTFDst];
+		return m_FormatClosestCacheEnm[eTFDst];
+	}
+
+	const SPixFormat* GetPixFormat(ETEX_Format eTFDst)
+	{
+		return m_FormatClosestCachePtr[eTFDst];
+	}
+
+	void CheckFormatSupport();
+
+private:
+	bool              m_FormatSupportedCache  [eTF_MaxFormat];
+	const SPixFormat* m_FormatClosestCachePtr [eTF_MaxFormat];
+	ETEX_Format       m_FormatClosestCacheEnm [eTF_MaxFormat];
+	ETEX_Format       m_FormatLessPreciseCache[eTF_MaxFormat];
+
+	bool        _IsFormatSupported(ETEX_Format eTFDst);
+	ETEX_Format _GetLessPreciseFormatSupported(ETEX_Format eTFDst);
+	ETEX_Format _GetClosestFormatSupported(ETEX_Format eTFDst, const SPixFormat*& pPF);
 };
 
 struct SClearValue
@@ -196,14 +229,14 @@ namespace DeviceFormats
 	D3DFormat ConvertToFloat         (D3DFormat nFormat  );
 	D3DFormat ConvertToTypeless      (D3DFormat nFormat  );
 
-	inline ETEX_Format ConvertToDepthStencil(ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToDepthStencil  (ConvertFromTexFormat(nFormat))); };
-	inline ETEX_Format ConvertToStencilOnly (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToStencilOnly   (ConvertFromTexFormat(nFormat))); };
-	inline ETEX_Format ConvertToDepthOnly   (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToDepthOnly     (ConvertFromTexFormat(nFormat))); };
-	inline ETEX_Format ConvertToSRGB        (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToSRGB          (ConvertFromTexFormat(nFormat))); };
-	inline ETEX_Format ConvertToSigned      (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToSigned        (ConvertFromTexFormat(nFormat))); };
-	inline ETEX_Format ConvertToUnsigned    (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToUnsigned      (ConvertFromTexFormat(nFormat))); };
-	inline ETEX_Format ConvertToFloat       (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToFloat         (ConvertFromTexFormat(nFormat))); };
-	inline ETEX_Format ConvertToTypeless    (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToTypeless      (ConvertFromTexFormat(nFormat))); };
+	inline ETEX_Format ConvertToDepthStencil(ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToDepthStencil  (ConvertFromTexFormat(nFormat))); }
+	inline ETEX_Format ConvertToStencilOnly (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToStencilOnly   (ConvertFromTexFormat(nFormat))); }
+	inline ETEX_Format ConvertToDepthOnly   (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToDepthOnly     (ConvertFromTexFormat(nFormat))); }
+	inline ETEX_Format ConvertToSRGB        (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToSRGB          (ConvertFromTexFormat(nFormat))); }
+	inline ETEX_Format ConvertToSigned      (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToSigned        (ConvertFromTexFormat(nFormat))); }
+	inline ETEX_Format ConvertToUnsigned    (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToUnsigned      (ConvertFromTexFormat(nFormat))); }
+	inline ETEX_Format ConvertToFloat       (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToFloat         (ConvertFromTexFormat(nFormat))); }
+	inline ETEX_Format ConvertToTypeless    (ETEX_Format nFormat) { return ConvertToTexFormat(ConvertToTypeless      (ConvertFromTexFormat(nFormat))); }
 
 	UINT GetStride                   (D3DFormat format   );
 }

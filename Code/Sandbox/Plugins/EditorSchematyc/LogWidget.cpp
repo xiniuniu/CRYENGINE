@@ -1,18 +1,17 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "LogWidget.h"
 
 #include <QVBoxLayout>
 #include <QLineEdit>
-#include <QParentWndWidget.h>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSplitter>
 #include <CryEntitySystem/IEntitySystem.h>
 #include <CrySystem/ICryLink.h>
 #include <CrySerialization/IArchiveHost.h>
-#include <QAdvancedPropertyTree.h>
+#include <QAdvancedPropertyTreeLegacy.h>
 #include <CrySchematyc/Script/IScriptRegistry.h>
 #include <CrySchematyc/Services/ILog.h>
 #include <CrySchematyc/Services/ILogRecorder.h>
@@ -196,7 +195,7 @@ CLogSettingsWidget::CLogSettingsWidget(SLogSettings& settings)
 {
 	QVBoxLayout* pLayout = new QVBoxLayout(this);
 
-	m_pPropertyTree = new QAdvancedPropertyTree("LogSettings");
+	m_pPropertyTree = new QAdvancedPropertyTreeLegacy("LogSettings");
 	m_pPropertyTree->setSizeHint(QSize(250, 250));
 	m_pPropertyTree->setExpandLevels(1);
 	m_pPropertyTree->setSliderUpdateDelay(5);

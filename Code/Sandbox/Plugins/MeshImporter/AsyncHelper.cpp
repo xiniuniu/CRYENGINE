@@ -1,19 +1,14 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 // Helper for async worker thread
 #include "StdAfx.h"
 #include "AsyncHelper.h"
-#include "QtUtil.h"
-#include "Expected.h"
-#include <QObject>
-#include <QThread>
-#include <QApplication>
-#include <QEvent>
-#include <QMainWindow>
-#include <QHBoxLayout>
-#include <QProgressBar>
 
-#include "Notifications/NotificationCenter.h"
 #include "DialogCommon.h"
+
+#include <Notifications/NotificationCenter.h>
+#include <Expected.h>
+
+#include <QThread>
 
 static int s_idTaskProgressEvent = 0;
 static int s_idTaskNotifyEvent = 0;

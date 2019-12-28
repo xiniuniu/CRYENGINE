@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ParticleParams.h
@@ -18,6 +18,7 @@
 #include <CryCore/CryCustomTypes.h>
 #include <CryMath/Cry_Math.h>
 #include <CryMath/Random.h>
+#include <CryRenderer/IRenderer.h>
 
 BASIC_TYPE_INFO(CCryName);
 
@@ -66,6 +67,7 @@ struct ETrinary : ETrinaryNames
 	}
 };
 
+//! \cond INTERNAL
 //! Pseudo-random number generation, from a key.
 class CChaosKey
 {
@@ -138,6 +140,7 @@ private:
 		return (u >> n) | (u << (32 - n));
 	}
 };
+//! \endcond
 
 // Float storage
 typedef TRangedType<float>            SFloat;
@@ -571,12 +574,14 @@ struct TRangeParam
 
 ///////////////////////////////////////////////////////////////////////
 //! Special surface type enum.
+//! \cond INTERNAL
 struct CSurfaceTypeIndex
 {
-	uint16 nIndex;
+	uint16 nIndex = 0;
 
 	STRUCT_INFO;
 };
+//! \endcond
 
 ///////////////////////////////////////////////////////////////////////
 //! Particle system parameters.
@@ -605,7 +610,7 @@ struct ParticleParams
 	struct SMaintainDensity : UFloat
 	{
 		UFloat fReduceLifeTime;
-		UFloat fReduceAlpha;                          //!< <SoftMax=1> Reduce alpha inversely to count increase.
+		UFloat fReduceAlpha;                    //!< <SoftMax=1> Reduce alpha inversely to count increase.
 		UFloat fReduceSize;
 		AUTO_STRUCT_INFO;
 	} fMaintainDensity;                             //!< <SoftMax=1> Increase count when emitter moves to maintain spatial density.
@@ -738,9 +743,9 @@ struct ParticleParams
 
 		void Correct()
 		{
-			nFirstTile = std::min<uint8>(nFirstTile, nTilesX * nTilesY - 1);
-			nAnimFramesCount = std::min<uint8>(nAnimFramesCount, GetTileCount());
-			nVariantCount = std::min<uint8>(nVariantCount, GetTileCount() / nAnimFramesCount);
+			nFirstTile = std::min<uint>(nFirstTile, nTilesX * nTilesY - 1);
+			nAnimFramesCount = std::min<uint>(nAnimFramesCount, GetTileCount());
+			nVariantCount = std::min<uint>(nVariantCount, GetTileCount() / nAnimFramesCount);
 		}
 
 		AUTO_STRUCT_INFO;
@@ -974,7 +979,7 @@ struct ParticleParams
 
 	struct SPlatforms
 	{
-		TSmallBoolTrue PCDX11, PS4, XBoxOne;
+		TSmallBoolTrue PCDX, PS4, PS4Pro, XBoxOne, XBoxOneX;
 		AUTO_STRUCT_INFO;
 	} Platforms;                                    //!< Platforms this effect runs on.
 

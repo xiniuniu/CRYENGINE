@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -10,9 +10,8 @@
 
 class QBoxLayout;
 class QLineEdit;
-class QParentWndWidget;
 class QPlainTextEdit;
-class QAdvancedPropertyTree;
+class QAdvancedPropertyTreeLegacy;
 class QPushButton;
 class QSplitter;
 
@@ -54,7 +53,7 @@ private:
 	SLogSettings&          m_settings;
 	QBoxLayout*            m_pLayout;
 	QPushButton*           m_pAttachToSelectedEntityButton;
-	QAdvancedPropertyTree* m_pPropertyTree;
+	QAdvancedPropertyTreeLegacy* m_pPropertyTree;
 };
 
 class CLogWidget : public QWidget

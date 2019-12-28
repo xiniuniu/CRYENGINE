@@ -1,24 +1,20 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ScreenSpaceSSS.h"
-#include "DriverD3D.h"
-
-void CScreenSpaceSSSStage::Init()
-{
-}
 
 void CScreenSpaceSSSStage::Execute(CTexture* pIrradianceTex)
 {
-	CD3D9Renderer* const __restrict rd = gcpRendD3D;
-
+	FUNCTION_PROFILER_RENDERER();
 	PROFILE_LABEL_SCOPE("SSSSS");
 
 	CShader* pShader = CShaderMan::s_shDeferredShading;
 
-	Vec4 viewSpaceParams(2.0f / rd->m_ProjMatrix.m00, 2.0f / rd->m_ProjMatrix.m11, -1.0f / rd->m_ProjMatrix.m00, -1.0f / rd->m_ProjMatrix.m11);
-	float fProjScaleX = 0.5f * rd->m_ProjMatrix.m00;
-	float fProjScaleY = 0.5f * rd->m_ProjMatrix.m11;
+	const auto& projMatrix = GetCurrentViewInfo().projMatrix;
+
+	Vec4 viewSpaceParams(2.0f / projMatrix.m00, 2.0f / projMatrix.m11, -1.0f / projMatrix.m00, -1.0f / projMatrix.m11);
+	float fProjScaleX = 0.5f * projMatrix.m00;
+	float fProjScaleY = 0.5f * projMatrix.m11;
 
 	static CCryNameTSCRC techBlur("SSSSS_Blur");
 	static CCryNameR viewSpaceParamsName("ViewSpaceParams");
@@ -26,17 +22,19 @@ void CScreenSpaceSSSStage::Execute(CTexture* pIrradianceTex)
 
 	// Horizontal pass
 	{
-		if (m_passH.InputChanged(pIrradianceTex->GetTextureID()))
+		if (m_passH.IsDirty(pIrradianceTex->GetTextureID()))
 		{
 			m_passH.SetTechnique(pShader, techBlur, 0);
-			m_passH.SetRenderTarget(0, CTexture::s_ptexSceneTargetR11G11B10F[1]);
+			m_passH.SetRenderTarget(0, m_graphicsPipelineResources.m_pTexSceneTargetR11G11B10F[1]);
+			m_passH.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
 			m_passH.SetState(GS_NODEPTHTEST);
 
-			m_passH.SetTextureSamplerPair(0, pIrradianceTex, EDefaultSamplerStates::PointClamp);
-			m_passH.SetTextureSamplerPair(1, CTexture::s_ptexZTarget, EDefaultSamplerStates::PointClamp);
-			m_passH.SetTextureSamplerPair(2, CTexture::s_ptexSceneNormalsMap, EDefaultSamplerStates::PointClamp);
-			m_passH.SetTextureSamplerPair(3, CTexture::s_ptexSceneDiffuse, EDefaultSamplerStates::PointClamp);
-			m_passH.SetTextureSamplerPair(4, CTexture::s_ptexSceneSpecular, EDefaultSamplerStates::PointClamp);
+			m_passH.SetTexture(0, pIrradianceTex);
+			m_passH.SetTexture(1, m_graphicsPipelineResources.m_pTexLinearDepth);
+			m_passH.SetTexture(2, m_graphicsPipelineResources.m_pTexSceneNormalsMap);
+			m_passH.SetTexture(3, m_graphicsPipelineResources.m_pTexSceneDiffuse);
+			m_passH.SetTexture(4, m_graphicsPipelineResources.m_pTexSceneSpecular);
+			m_passH.SetSampler(0, EDefaultSamplerStates::PointClamp);
 		}
 
 		m_passH.BeginConstantUpdate();
@@ -49,18 +47,20 @@ void CScreenSpaceSSSStage::Execute(CTexture* pIrradianceTex)
 
 	// Vertical pass
 	{
-		if (m_passV.InputChanged(pIrradianceTex->GetTextureID()))
+		if (m_passV.IsDirty(pIrradianceTex->GetTextureID()))
 		{
 			m_passV.SetTechnique(pShader, techBlur, g_HWSR_MaskBit[HWSR_SAMPLE0]);
-			m_passV.SetRenderTarget(0, CTexture::s_ptexHDRTarget);
+			m_passV.SetRenderTarget(0, m_graphicsPipelineResources.m_pTexHDRTarget);
+			m_passV.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
 			m_passV.SetState(GS_NODEPTHTEST | GS_BLSRC_ONE | GS_BLDST_ONE);
 
-			m_passV.SetTextureSamplerPair(0, CTexture::s_ptexSceneTargetR11G11B10F[1], EDefaultSamplerStates::PointClamp);
-			m_passV.SetTextureSamplerPair(1, CTexture::s_ptexZTarget, EDefaultSamplerStates::PointClamp);
-			m_passV.SetTextureSamplerPair(2, CTexture::s_ptexSceneNormalsMap, EDefaultSamplerStates::PointClamp);
-			m_passV.SetTextureSamplerPair(3, CTexture::s_ptexSceneDiffuse, EDefaultSamplerStates::PointClamp);
-			m_passV.SetTextureSamplerPair(4, CTexture::s_ptexSceneSpecular, EDefaultSamplerStates::PointClamp);
-			m_passV.SetTextureSamplerPair(5, pIrradianceTex, EDefaultSamplerStates::PointClamp);
+			m_passV.SetTexture(0, m_graphicsPipelineResources.m_pTexSceneTargetR11G11B10F[1]);
+			m_passV.SetTexture(1, m_graphicsPipelineResources.m_pTexLinearDepth);
+			m_passV.SetTexture(2, m_graphicsPipelineResources.m_pTexSceneNormalsMap);
+			m_passV.SetTexture(3, m_graphicsPipelineResources.m_pTexSceneDiffuse);
+			m_passV.SetTexture(4, m_graphicsPipelineResources.m_pTexSceneSpecular);
+			m_passV.SetTexture(5, pIrradianceTex);
+			m_passV.SetSampler(0, EDefaultSamplerStates::PointClamp);
 		}
 
 		m_passV.BeginConstantUpdate();

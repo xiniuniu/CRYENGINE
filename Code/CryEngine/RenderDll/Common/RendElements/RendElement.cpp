@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    RendElement.cpp : common RE functions.
@@ -15,7 +15,7 @@ CRenderElement *CRenderElement::s_pRootRelease[4];
 
 //===============================================================
 
-CryCriticalSection m_sREResLock;
+CryCriticalSection CRenderElement::s_accessLock;
 
 int CRenderElement::s_nCounter;
 
@@ -26,7 +26,7 @@ void CRenderElement::ShutDown()
 	if (!CRenderer::CV_r_releaseallresourcesonexit)
 		return;
 
-	AUTO_LOCK(m_sREResLock); // Not thread safe without this
+	AUTO_LOCK(s_accessLock); // Not thread safe without this
 
 	CRenderElement* pRE;
 	CRenderElement* pRENext;
@@ -42,11 +42,12 @@ void CRenderElement::ShutDown()
 
 void CRenderElement::Tick()
 {
+	FUNCTION_PROFILER_RENDERER();
+
 #ifndef STRIP_RENDER_THREAD
 	assert(gRenDev->m_pRT->IsMainThread(true));
 #endif
-	int nFrameID = gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nFillThreadID].m_nFrameUpdateID;
-	int nFrame = nFrameID - 3;
+	uint32 nFrame = (uint32)(gRenDev->GetMainFrameID()) - 3;
 	CRenderElement& Root = *CRenderElement::s_pRootRelease[nFrame & 3];
 	CRenderElement* pRENext = NULL;
 
@@ -61,14 +62,14 @@ void CRenderElement::Cleanup()
 {
 	gRenDev->m_pRT->FlushAndWait();
 
-	AUTO_LOCK(m_sREResLock); // Not thread safe without this
+	AUTO_LOCK(s_accessLock); // Not thread safe without this
 
 	for (int i = 0; i < 4; ++i)
 	{
 		CRenderElement& Root = *CRenderElement::s_pRootRelease[i];
-		CRenderElement* pRENext = NULL;
+		CRenderElement* pRENext = nullptr;
 
-		for (CRenderElement* pRE = Root.m_NextGlobal; pRE != &Root; pRE = pRENext)
+		for (CRenderElement* pRE = Root.m_NextGlobal; pRE != &Root && pRE != nullptr; pRE = pRENext)
 		{
 			pRENext = pRE->m_NextGlobal;
 			SAFE_DELETE(pRE);
@@ -91,9 +92,9 @@ void CRenderElement::Release(bool bForce)
 		delete this;
 		return;
 	}
-	int nFrame = gRenDev->GetFrameID(false);
+	int nFrame = gRenDev->GetFrameID();
 
-	AUTO_LOCK(m_sREResLock);
+	AUTO_LOCK(s_accessLock);
 	CRenderElement& Root = *CRenderElement::s_pRootRelease[nFrame & 3];
 	UnlinkGlobal();
 	LinkGlobal(&Root);
@@ -115,8 +116,8 @@ CRenderElement::CRenderElement(bool bGlobal)
 		}
 	}
 
-	m_Flags = 0;
-	m_nFrameUpdated = 0xffff;
+	m_Flags = FCEF_NONE;
+	m_nFrameUpdated = -1;
 	m_CustomData = NULL;
 	m_nID = CRenderElement::s_nCounter++;
 	int i;
@@ -128,8 +129,8 @@ CRenderElement::CRenderElement()
 {
 	m_Type = eDATA_Unknown;
 
-	m_Flags = 0;
-	m_nFrameUpdated = 0xffff;
+	m_Flags = FCEF_NONE;
+	m_nFrameUpdated = -1;
 	m_CustomData = NULL;
 	m_NextGlobal = NULL;
 	m_PrevGlobal = NULL;
@@ -140,7 +141,7 @@ CRenderElement::CRenderElement()
 
 	//sAddRE(this);
 
-	AUTO_LOCK(m_sREResLock);
+	AUTO_LOCK(s_accessLock);
   LinkGlobal(&s_RootGlobal);
 }
 CRenderElement::~CRenderElement()
@@ -151,18 +152,8 @@ CRenderElement::~CRenderElement()
 	if (this == s_pRootRelease[0] || this == s_pRootRelease[1] || this == s_pRootRelease[2] || this == s_pRootRelease[3] || this == &s_RootGlobal)
 		return;
 
-	AUTO_LOCK(m_sREResLock);
+	AUTO_LOCK(s_accessLock);
 	UnlinkGlobal();
-
-	if ((m_Flags & FCEF_ALLOC_CUST_FLOAT_DATA) && m_CustomData)
-	{
-		delete[] ((float*)m_CustomData);
-		m_CustomData = 0;
-	}
-}
-
-void CRenderElement::mfPrepare(bool bCheckOverflow)
-{
 }
 
 CRenderChunk*      CRenderElement::mfGetMatInfo()     { return NULL; }
@@ -174,36 +165,26 @@ const char*        CRenderElement::mfTypeString()
 {
 	switch (m_Type)
 	{
-	case eDATA_Sky:
-		return "Sky";
 	case eDATA_ClientPoly:
 		return "ClientPoly";
 	case eDATA_Flare:
 		return "Flare";
 	case eDATA_Terrain:
 		return "Terrain";
-	case eDATA_SkyZone:
-		return "SkyZone";
 	case eDATA_Mesh:
 		return "Mesh";
 	case eDATA_LensOptics:
 		return "LensOptics";
-	case eDATA_FarTreeSprites:
-		return "FarTreeSprites";
 	case eDATA_OcclusionQuery:
 		return "OcclusionQuery";
 	case eDATA_Particle:
 		return "Particle";
-	case eDATA_HDRSky:
-		return "HDRSky";
 	case eDATA_FogVolume:
 		return "FogVolume";
 	case eDATA_WaterVolume:
 		return "WaterVolume";
 	case eDATA_WaterOcean:
 		return "WaterOcean";
-	case eDATA_DeferredShading:
-		return "DeferredShading";
 	case eDATA_GameEffect:
 		return "GameEffect";
 	case eDATA_BreakableGlass:
@@ -224,39 +205,33 @@ CRenderElement* CRenderElement::mfCopyConstruct(void)
 	*re = *this;
 	return re;
 }
-void CRenderElement::mfCenter(Vec3& centr, CRenderObject* pObj)
+
+void CRenderElement::mfCenter(Vec3& Pos, CRenderObject* pObj, const SRenderingPassInfo& passInfo)
 {
-	centr(0, 0, 0);
+	AABB bb;
+	mfGetBBox(bb);
+
+	Pos = bb.GetCenter();
+	if (pObj)
+		Pos += pObj->GetMatrix().GetTranslation();
 }
+
 void CRenderElement::mfGetPlane(Plane& pl)
 {
-	pl.n = Vec3(0, 0, 1);
-	pl.d = 0;
+	// TODO: plane orientation based on biggest bbox axis
+	AABB bb;
+	mfGetBBox(bb);
+
+	Vec3 p0 = bb.min;
+	Vec3 p1 = Vec3(bb.max.x, bb.min.y, bb.min.z);
+	Vec3 p2 = Vec3(bb.min.x, bb.max.y, bb.min.z);
+	pl.SetPlane(p2, p0, p1);
 }
 
-bool  CRenderElement::mfDraw(CShader* ef, SShaderPass* sfm)                                                   { return false; }
-void* CRenderElement::mfGetPointer(ESrcPointer ePT, int* Stride, EParamType Type, ESrcPointer Dst, int Flags) { return NULL; }
-
-//=============================================================================
-
-void* SRendItem::mfGetPointerCommon(ESrcPointer ePT, int* Stride, EParamType Type, ESrcPointer Dst, int Flags)
+void CRenderElement::mfGetBBox(AABB& bb) const
 {
-	int j;
-	switch (ePT)
-	{
-	case eSrcPointer_Vert:
-		*Stride = gRenDev->m_RP.m_StreamStride;
-		return gRenDev->m_RP.m_StreamPtr.PtrB;
-
-	case eSrcPointer_Color:
-		*Stride = gRenDev->m_RP.m_StreamStride;
-		return gRenDev->m_RP.m_StreamPtr.PtrB + gRenDev->m_RP.m_StreamOffsetColor;
-
-	case eSrcPointer_Tex:
-	case eSrcPointer_TexLM:
-		*Stride = gRenDev->m_RP.m_StreamStride;
-		j = ePT - eSrcPointer_Tex;
-		return gRenDev->m_RP.m_StreamPtr.PtrB + gRenDev->m_RP.m_StreamOffsetTC + j * 16;
-	}
-	return NULL;
+	// Obj view max distance
+	bb = AABB { Vec3(-100000.f), Vec3(+100000.f) };
 }
+
+void* CRenderElement::mfGetPointer(ESrcPointer ePT, int* Stride, EParamType Type, ESrcPointer Dst, EStreamMasks StreamMask) { return NULL; }

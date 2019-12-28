@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "EnvRegistry.h"
@@ -197,6 +197,16 @@ void CEnvRegistry::VisitDataTypes(const EnvDataTypeConstVisitor& visitor) const
 	}
 }
 
+void CEnvRegistry::RegisterListener(IEnvRegistryListener* pListener)
+{
+	m_listeners.push_back(pListener);
+}
+
+void CEnvRegistry::UnregisterListener(IEnvRegistryListener* pListener)
+{
+	stl::find_and_erase(m_listeners, pListener);
+}
+
 const IEnvSignal* CEnvRegistry::GetSignal(const CryGUID& guid) const
 {
 	Signals::const_iterator itSignal = m_signals.find(guid);
@@ -368,10 +378,10 @@ void CEnvRegistry::Refresh()
 
 	m_elements.clear();
 
-	for (const Packages::value_type& package : m_packages)
-	{
-		// #SchematycTODO : Re-register package elements!!!
-	}
+	//for (const Packages::value_type& package : m_packages)
+	//{
+	//	// #SchematycTODO : Re-register package elements!!!
+	//}
 }
 
 bool CEnvRegistry::RegisterPackageElements(const EnvPackageElements& packageElements)
@@ -382,7 +392,9 @@ bool CEnvRegistry::RegisterPackageElements(const EnvPackageElements& packageElem
 
 	for (const SEnvPackageElement& packageElement : packageElements)
 	{
-		if (IEnvElement* pExistingElement = GetElement(packageElement.elementGUID))
+		IEnvElement* pExistingElement = GetElement(packageElement.elementGUID);
+
+		if (pExistingElement != nullptr)
 		{
 			CStackString temp;
 			GUID::ToString(temp, packageElement.elementGUID);
@@ -391,6 +403,11 @@ bool CEnvRegistry::RegisterPackageElements(const EnvPackageElements& packageElem
 		}
 
 		m_elements.insert(Elements::value_type(packageElement.elementGUID, packageElement.pElement));
+
+		for (auto listeners : m_listeners)
+		{
+			listeners->OnEnvElementAdd(packageElement.pElement);
+		}
 
 		switch (packageElement.pElement->GetType())
 		{
@@ -494,6 +511,11 @@ void CEnvRegistry::ReleasePackageElements(const EnvPackageElements& packageEleme
 			pScope->DetachChild(*packageElement.pElement);
 		}
 
+		for (auto listeners : m_listeners)
+		{
+			listeners->OnEnvElementDelete(packageElement.pElement);
+		}
+
 		switch (packageElement.pElement->GetType())
 		{
 		case EEnvElementType::Module:
@@ -556,7 +578,7 @@ bool CEnvRegistry::ValidateComponentDependencies() const
 		const CEntityComponentClassDesc& componentDesc = component.second->GetDesc();
 		for(const SEntityComponentRequirements& interaction : componentDesc.GetComponentInteractions())
 		{
-			if (interaction.type != SEntityComponentRequirements::EType::SoftDependency && interaction.type != SEntityComponentRequirements::EType::HardDependency)
+			if (interaction.type != SEntityComponentRequirements::EType::HardDependency)
 			{
 				continue;
 			}

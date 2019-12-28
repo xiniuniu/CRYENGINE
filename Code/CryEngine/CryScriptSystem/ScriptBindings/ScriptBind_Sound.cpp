@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ScriptBind_Sound.h"
@@ -20,7 +20,6 @@ CScriptBind_Sound::CScriptBind_Sound(IScriptSystem* pScriptSystem, ISystem* pSys
 	SCRIPT_REG_TEMPLFUNC(GetAudioEnvironmentID, "sEnvironmentName");
 	SCRIPT_REG_TEMPLFUNC(SetAudioRtpcValue, "hRtpcID, fValue");
 	SCRIPT_REG_TEMPLFUNC(GetAudioTriggerRadius, "triggerId");
-	SCRIPT_REG_TEMPLFUNC(GetAudioTriggerOcclusionFadeOutDistance, "triggerId");
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -86,7 +85,7 @@ int CScriptBind_Sound::GetAudioEnvironmentID(IFunctionHandler* pH, char const* c
 //////////////////////////////////////////////////////////////////////////
 int CScriptBind_Sound::SetAudioRtpcValue(IFunctionHandler* pH, ScriptHandle const hParameterId, float const value)
 {
-	gEnv->pAudioSystem->SetParameter(HandleToInt<CryAudio::ControlId>(hParameterId), value);
+	gEnv->pAudioSystem->SetParameterGlobally(HandleToInt<CryAudio::ControlId>(hParameterId), value);
 	return pH->EndFunction();
 }
 
@@ -96,12 +95,4 @@ int CScriptBind_Sound::GetAudioTriggerRadius(IFunctionHandler* pH, ScriptHandle 
 	CryAudio::STriggerData data;
 	gEnv->pAudioSystem->GetTriggerData(HandleToInt<CryAudio::ControlId>(hTriggerID), data);
 	return pH->EndFunction(data.radius);
-}
-
-//////////////////////////////////////////////////////////////////////////
-int CScriptBind_Sound::GetAudioTriggerOcclusionFadeOutDistance(IFunctionHandler* pH, ScriptHandle const hTriggerID)
-{
-	CryAudio::STriggerData data;
-	gEnv->pAudioSystem->GetTriggerData(HandleToInt<CryAudio::ControlId>(hTriggerID), data);
-	return pH->EndFunction(data.occlusionFadeOutDistance);
 }

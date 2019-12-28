@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   CryMemoryManager_impl.h
@@ -67,9 +67,9 @@ struct _CryMemoryManagerPoolHelper
 
 	static int                               m_bInitialized;
 
-	// Use template as most modules do not define memory management functions and use the one from CrySystem 
+	// Use template as most modules do not define memory management functions and use the one from CrySystem
 	// which may be part of the Launcher if not build as _LIB (monolithic).
-	template<int> static void BindMemoryFunctionPointers();	
+	template<int> static void BindMemoryFunctionPointers();
 
 	static void Init();
 	static void FakeAllocation(long size)
@@ -170,30 +170,41 @@ template<int> void _CryMemoryManagerPoolHelper::BindMemoryFunctionPointers()
 	HMODULE hMod = CryGetCurrentModule();
 	for (int i = 0; i < 2; i++)
 	{
-		_CryMalloc = (FNC_CryMalloc)CryGetProcAddress(hMod, DLL_ENTRY_CRYMALLOC);
-		_CryRealloc = (FNC_CryRealloc)CryGetProcAddress(hMod, DLL_ENTRY_CRYREALLOC);
-		_CryFree = (FNC_CryFree)CryGetProcAddress(hMod, DLL_ENTRY_CRYFREE);
-		_CryGetMemSize = (FNC_CryGetMemSize)CryGetProcAddress(hMod, DLL_ENTRY_CRYGETMEMSIZE);
-		_CryCrtMalloc = (FNC_CryCrtMalloc)CryGetProcAddress(hMod, DLL_ENTRY_CRYCRTMALLOC);
-		_CryCrtSize = (FNC_CryCrtSize)CryGetProcAddress(hMod, DLL_ENTRY_CRYCRTSIZE);
-		_CryCrtFree = (FNC_CryCrtFree)CryGetProcAddress(hMod, DLL_ENTRY_CRYCRTFREE);
-		_CryGetIMemoryManagerInterface = (FNC_CryGetIMemoryManagerInterface)CryGetProcAddress(hMod, DLL_ENTRY_GETMEMMANAGER);
+		if (hMod)
+		{
+			_CryMalloc = (FNC_CryMalloc)CryGetProcAddress(hMod, DLL_ENTRY_CRYMALLOC);
+			_CryRealloc = (FNC_CryRealloc)CryGetProcAddress(hMod, DLL_ENTRY_CRYREALLOC);
+			_CryFree = (FNC_CryFree)CryGetProcAddress(hMod, DLL_ENTRY_CRYFREE);
+			_CryGetMemSize = (FNC_CryGetMemSize)CryGetProcAddress(hMod, DLL_ENTRY_CRYGETMEMSIZE);
+			_CryCrtMalloc = (FNC_CryCrtMalloc)CryGetProcAddress(hMod, DLL_ENTRY_CRYCRTMALLOC);
+			_CryCrtSize = (FNC_CryCrtSize)CryGetProcAddress(hMod, DLL_ENTRY_CRYCRTSIZE);
+			_CryCrtFree = (FNC_CryCrtFree)CryGetProcAddress(hMod, DLL_ENTRY_CRYCRTFREE);
+			_CryGetIMemoryManagerInterface = (FNC_CryGetIMemoryManagerInterface)CryGetProcAddress(hMod, DLL_ENTRY_GETMEMMANAGER);
 
-		if ((_CryMalloc && _CryRealloc && _CryFree && _CryGetMemSize && _CryCrtMalloc && _CryCrtFree && _CryCrtSize && _CryGetIMemoryManagerInterface))
-			break;
+			if ((_CryMalloc && _CryRealloc && _CryFree && _CryGetMemSize && _CryCrtMalloc && _CryCrtFree && _CryCrtSize && _CryGetIMemoryManagerInterface))
+				break;
+		}
 
 		hMod = CryLoadLibraryDefName("CrySystem");
 	}
 
 	if (!hMod || !_CryMalloc || !_CryRealloc || !_CryFree || !_CryGetMemSize || !_CryCrtMalloc || !_CryCrtFree || !_CryCrtSize || !_CryGetIMemoryManagerInterface)
 	{
-		const char* errMsg = hMod ? "Memory Manager: Unable to bind memory management functions."
-			: "Memory Manager: Unable to bind memory management functions. Could not access " CryLibraryDefName("CrySystem")" (check working directory)";
-#if CRY_PLATFORM_WINAPI && !CRY_PLATFORM_DURANGO
-		MessageBox(NULL, errMsg, "Memory Manager", MB_OK);
+		char errMsg[10240];
+		if (hMod)
+		{
+			sprintf(errMsg, "%s", "Memory Manager: Unable to bind memory management functions.");
+		}
+		else
+		{
+#ifdef CRY_PLATFORM_LINUX
+			sprintf(errMsg, "%s\nError details: %s", "Memory Manager: Unable to bind memory management functions. Could not access " CryLibraryDefName("CrySystem")" (check working directory)", dlerror());
 #else
-		OutputDebugString(errMsg);
+			sprintf(errMsg, "%s", "Memory Manager: Unable to bind memory management functions. Could not access " CryLibraryDefName("CrySystem")" (check working directory)");
 #endif
+		}
+
+		CryMessageBox(errMsg, "Memory Manager", eMB_Error);
 		__debugbreak();
 		abort();
 	}
@@ -226,12 +237,12 @@ void _CryMemoryManagerPoolHelper::Init()
 #ifndef eCryModule
 	BindMemoryFunctionPointers<eCryM_EnginePlugin>();
 #else
-	#if defined(CRY_IS_MONOLITHIC_BUILD) 
+	#if defined(CRY_IS_MONOLITHIC_BUILD)
 		BindMemoryFunctionPointers<eCryM_System>();
 	#else
 		BindMemoryFunctionPointers<eCryModule>();
 	#endif
-#endif		
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -261,7 +272,7 @@ int _CryMemoryManagerPoolHelper::m_bInitialized = 0;
 //////////////////////////////////////////////////////////////////////////
 void* CryModuleMalloc(size_t size) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	void* ret = _CryMemoryManagerPoolHelper::Malloc(size, 0);
 	MEMREPLAY_SCOPE_ALLOC(ret, size, 0);
 	return ret;
@@ -270,7 +281,7 @@ void* CryModuleMalloc(size_t size) noexcept
 //////////////////////////////////////////////////////////////////////////
 void* CryModuleRealloc(void* ptr, size_t size)  noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	void* ret = _CryMemoryManagerPoolHelper::Realloc(ptr, size, 0);
 	MEMREPLAY_SCOPE_REALLOC(ptr, ret, size, 0);
 	return ret;
@@ -279,7 +290,7 @@ void* CryModuleRealloc(void* ptr, size_t size)  noexcept
 //////////////////////////////////////////////////////////////////////////
 void CryModuleFree(void* ptr) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	_CryMemoryManagerPoolHelper::Free(ptr, 0);
 	MEMREPLAY_SCOPE_FREE(ptr);
 };
@@ -292,7 +303,7 @@ size_t CryModuleMemSize(void* ptr, size_t sz) noexcept
 //////////////////////////////////////////////////////////////////////////
 void* CryModuleMemalign(size_t size, size_t alignment) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	void* ret = _CryMemoryManagerPoolHelper::Malloc(size, alignment);
 	MEMREPLAY_SCOPE_ALLOC(ret, size, alignment);
 	return ret;
@@ -300,22 +311,22 @@ void* CryModuleMemalign(size_t size, size_t alignment) noexcept
 
 void CryModuleMemalignFree(void* ptr) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	_CryMemoryManagerPoolHelper::Free(ptr, 1000); // Free with alignment
 	MEMREPLAY_SCOPE_FREE(ptr);
 };
 
-void* CryModuleCalloc(size_t a, size_t b) noexcept
+void* CryModuleCalloc(size_t num, size_t size) noexcept
 {
-	void* p = CryModuleMalloc(a * b);
-	memset(p, 0, a * b);
+	void* p = CryModuleMalloc(num * size);
+	memset(p, 0, num * size);
 	return p;
 }
 
 //////////////////////////////////////////////////////////////////////////
 void* CryModuleReallocAlign(void* ptr, size_t size, size_t alignment) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	void* ret = _CryMemoryManagerPoolHelper::Realloc(ptr, size, alignment);
 	MEMREPLAY_SCOPE_REALLOC(ptr, ret, size, alignment);
 	return ret;
@@ -353,32 +364,37 @@ size_t CryCrtSize(void* p)
 // Redefine new & delete for entire module.
 #if !defined(NOT_USE_CRY_MEMORY_MANAGER)
 
+PREFAST_SUPPRESS_WARNING(28251)
 void* __cdecl operator new(std::size_t size)
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNew);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNew);
 	void* ret = CryModuleMalloc(size);
 	MEMREPLAY_SCOPE_ALLOC(ret, size, 0);
 	return ret;
 }
+
+PREFAST_SUPPRESS_WARNING(28251)
 void* __cdecl operator new(std::size_t size, const std::nothrow_t& nothrow_value) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNew);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNew);
 	void* ret = CryModuleMalloc(size);
 	MEMREPLAY_SCOPE_ALLOC(ret, size, 0);
 	return ret;
 }
 
+PREFAST_SUPPRESS_WARNING(28251)
 void* __cdecl operator new[](std::size_t size)
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNewArray);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNewArray);
 	void* ret = CryModuleMalloc(size);
 	MEMREPLAY_SCOPE_ALLOC(ret, size, 0);
 	return ret;
 }
 
+PREFAST_SUPPRESS_WARNING(28251)
 void* __cdecl operator new[](std::size_t size, const std::nothrow_t& nothrow_value) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNewArray);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNewArray);
 	void* ret = CryModuleMalloc(size);
 	MEMREPLAY_SCOPE_ALLOC(ret, size, 0);
 	return ret;
@@ -386,43 +402,41 @@ void* __cdecl operator new[](std::size_t size, const std::nothrow_t& nothrow_val
 
 void __cdecl operator delete (void* ptr) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNew);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNew);
 	CryModuleFree(ptr);
 	MEMREPLAY_SCOPE_FREE(ptr);
 }
 
 void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNew);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNew);
 	CryModuleFree(ptr);
 	MEMREPLAY_SCOPE_FREE(ptr);
 }
 
 void __cdecl operator delete[](void* ptr) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNew);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNew);
 	CryModuleFree(ptr);
 	MEMREPLAY_SCOPE_FREE(ptr);
 }
 
 void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CrtNew);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CrtNew);
 	CryModuleFree(ptr);
 	MEMREPLAY_SCOPE_FREE(ptr);
 }
 #endif
 
 //////////////////////////////////////////////////////////////////////////
-#ifndef MEMMAN_STATIC
+static IMemoryManager* memMan = nullptr;
 IMemoryManager* CryGetIMemoryManager()
 {
-	static IMemoryManager* memMan = 0;
 	if (!memMan)
 		memMan = _CryMemoryManagerPoolHelper::GetIMemoryManager();
 	return memMan;
 }
-#endif //!defined(_LIB)
 
 // ~memReplay
 #endif // __CryMemoryManager_impl_h__

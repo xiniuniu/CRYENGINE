@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ModuleManager.h"
@@ -7,7 +7,7 @@
 #include "FlowModuleNodes.h"
 
 #include <CryFlowGraph/IFlowBaseNode.h>
-
+#include <CryRenderer/IRenderAuxGeom.h>
 
 #if !defined (_RELEASE)
 void RenderModuleDebugInfo();
@@ -38,14 +38,6 @@ CFlowGraphModuleManager::CFlowGraphModuleManager()
 	  "2=Modules + Module Instances");
 	fg_debugmodules_filter = REGISTER_STRING("fg_debugmodules_filter", "", VF_NULL,
 	                                         "List of module names to display with the CVar 'fg_debugmodules'. Partial names can be supplied, but not regular expressions.");
-
-#if !defined (_RELEASE)
-	CRY_ASSERT_MESSAGE(gEnv->pGameFramework, "Unable to register as Framework listener!");
-	if (gEnv->pGameFramework)
-	{
-		gEnv->pGameFramework->RegisterListener(this, "FlowGraphModuleManager", FRAMEWORKLISTENERPRIORITY_GAME);
-	}
-#endif
 }
 
 CFlowGraphModuleManager::~CFlowGraphModuleManager()
@@ -72,7 +64,7 @@ void CFlowGraphModuleManager::Shutdown()
 
 void CFlowGraphModuleManager::DestroyModule(TModuleMap::iterator& itModule)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	IF_UNLIKELY(!itModule->second) return;
 
 	for (CListenerSet<IFlowGraphModuleListener*>::Notifier notifier(m_listeners); notifier.IsValid(); notifier.Next())
@@ -85,7 +77,7 @@ void CFlowGraphModuleManager::DestroyModule(TModuleMap::iterator& itModule)
 
 void CFlowGraphModuleManager::ClearModules()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	for (TModuleMap::iterator i = m_Modules.begin(), end = m_Modules.end(); i != end; ++i)
 	{
 		DestroyModule(i);
@@ -98,7 +90,7 @@ void CFlowGraphModuleManager::ClearModules()
 
 void CFlowGraphModuleManager::ClearLevelModules()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	for (TModuleMap::iterator it = m_Modules.begin(); it != m_Modules.end();)
 	{
 		CFlowGraphModule* pModule = it->second;
@@ -167,7 +159,7 @@ CFlowGraphModule* CFlowGraphModuleManager::PreLoadModuleFile(const char* moduleN
 void CFlowGraphModuleManager::LoadModuleGraph(const char* moduleName, const char* fileName, IFlowGraphModuleListener::ERootGraphChangeReason rootGraphChangeReason)
 {
 	// Load actual graph with nodes and edges. The module should already be constructed and its nodes (call/start/end) registered
-	LOADING_TIME_PROFILE_SECTION_ARGS(fileName);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, fileName);
 
 	// first check for existing module - must exist by this point
 	CFlowGraphModule* pModule = static_cast<CFlowGraphModule*>(GetModule(moduleName));
@@ -295,7 +287,7 @@ void CFlowGraphModuleManager::ScanFolder(const string& folderName, bool bGlobal)
 					PathUtil::MakeGamePath(folderName);
 
 					// initial load: creates module, registers nodes
-					CFlowGraphModule* pModule = PreLoadModuleFile(moduleName.c_str(), PathUtil::GetPathWithoutFilename(folderName) + fd.name, bGlobal);
+					PreLoadModuleFile(moduleName.c_str(), PathUtil::GetPathWithoutFilename(folderName) + fd.name, bGlobal);
 				}
 			}
 
@@ -306,9 +298,9 @@ void CFlowGraphModuleManager::ScanFolder(const string& folderName, bool bGlobal)
 	}
 }
 
-void CFlowGraphModuleManager::RescanModuleNames(bool bGlobal)
+void CFlowGraphModuleManager::RescanModuleNames(bool bGlobal, const char* szLoadedLevelName)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(bGlobal ? "Global Modules" : "Level Modules");
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, bGlobal ? "Global Modules" : "Level Modules");
 
 	CryFixedStringT<512> path = "";
 
@@ -327,10 +319,11 @@ void CFlowGraphModuleManager::RescanModuleNames(bool bGlobal)
 		}
 		else if (gEnv->pGameFramework->GetILevelSystem())
 		{
-			ILevelInfo* pLevel = gEnv->pGameFramework->GetILevelSystem()->GetCurrentLevel();
+			ILevelInfo* pLevel = gEnv->pGameFramework->GetILevelSystem()->GetLevelInfo(szLoadedLevelName);
 			if (pLevel)
 			{
 				path = pLevel->GetPath();
+				path.append("/");
 			}
 		}
 
@@ -345,9 +338,9 @@ void CFlowGraphModuleManager::RescanModuleNames(bool bGlobal)
 	ScanFolder(PathUtil::AddSlash(path), bGlobal);
 }
 
-void CFlowGraphModuleManager::ScanAndReloadModules(bool bScanGlobalModules, bool bScanLevelModules)
+void CFlowGraphModuleManager::ScanAndReloadModules(bool bScanGlobalModules, bool bScanLevelModules, const char* szLoadedLevelName)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	// First pass: RescanModuleNames will "preload" the modules.
 	// The module will be constructed ant its nodes (call,start,end) registered in the flowsystem. The actual graph is not loaded.
@@ -355,13 +348,13 @@ void CFlowGraphModuleManager::ScanAndReloadModules(bool bScanGlobalModules, bool
 	if (bScanGlobalModules)
 	{
 		ClearModules();
-		RescanModuleNames(true);  // global
+		RescanModuleNames(true, szLoadedLevelName);  // global
 	}
 
 	if (bScanLevelModules)
 	{
 		ClearLevelModules();
-		RescanModuleNames(false); // level
+		RescanModuleNames(false, szLoadedLevelName); // level
 	}
 
 	// Second pass: loading the actual graphs with their nodes and edges
@@ -557,12 +550,21 @@ void CFlowGraphModuleManager::OnSystemEvent(ESystemEvent event, UINT_PTR wparam,
 	{
 	case ESYSTEM_EVENT_GAME_POST_INIT:
 		{
-			ScanAndReloadModules(true, false); // load global modules only
+#if !defined (_RELEASE)
+			CRY_ASSERT(gEnv->pGameFramework, "Unable to register as Framework listener!");
+			if (gEnv->pGameFramework)
+			{
+				gEnv->pGameFramework->RegisterListener(this, "FlowGraphModuleManager", FRAMEWORKLISTENERPRIORITY_GAME);
+			}
+#endif
+			const char* szLevelName = reinterpret_cast<const char*>(wparam);
+			ScanAndReloadModules(true, false, szLevelName); // load global modules only
 		}
 		break;
 	case ESYSTEM_EVENT_LEVEL_LOAD_START:
 		{
-			ScanAndReloadModules(false, true); // load level modules
+			const char* szLevelName = reinterpret_cast<const char*>(wparam);
+			ScanAndReloadModules(false, true, szLevelName); // load level modules
 		}
 		break;
 	case ESYSTEM_EVENT_LEVEL_UNLOAD:
@@ -621,7 +623,7 @@ void DrawModuleTextLabel(float x, float y, const float* pColor, const char* pFor
 
 void RenderModuleDebugInfo()
 {
-	CRY_ASSERT_MESSAGE(gEnv->pFlowSystem, "No Flowsystem available!");
+	CRY_ASSERT(gEnv->pFlowSystem, "No Flowsystem available!");
 
 	if (!gEnv->pFlowSystem || !gEnv->pFlowSystem->GetIModuleManager())
 		return;

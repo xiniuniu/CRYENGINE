@@ -1,12 +1,16 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
-#include "AudioImpl.h"
-#include "AudioImplCVars.h"
+#include "Impl.h"
+#include "CVars.h"
 #include <CryAudio/IAudioSystem.h>
 #include <CryCore/Platform/platform_impl.inl>
 #include <CrySystem/IEngineModule.h>
 #include <CryExtension/ClassWeaver.h>
+
+#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
+	#include <Logger.h>
+#endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
 #if CRY_PLATFORM_DURANGO
 	#include <apu.h>
@@ -20,10 +24,9 @@ namespace Impl
 namespace Wwise
 {
 // Define global objects.
-CLogger g_implLogger;
 CCVars g_cvars;
 
-#if defined(PROVIDE_WWISE_IMPL_SECONDARY_POOL)
+#if defined(CRY_AUDIO_IMPL_WWISE_PROVIDE_SECONDARY_POOL)
 MemoryPoolReferenced g_audioImplMemoryPoolSecondary;
 #endif // PROVIDE_AUDIO_IMPL_SECONDARY_POOL
 
@@ -44,14 +47,13 @@ class CEngineModule_CryAudioImplWwise : public CryAudio::IImplModule
 	virtual const char* GetCategory() const override { return "CryAudio"; }
 
 	//////////////////////////////////////////////////////////////////////////
-	virtual bool Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override
+	virtual bool Initialize(SSystemGlobalEnvironment& env, SSystemInitParams const& initParams) override
 	{
-#if defined(PROVIDE_WWISE_IMPL_SECONDARY_POOL)
+#if defined(CRY_AUDIO_IMPL_WWISE_PROVIDE_SECONDARY_POOL)
 		size_t secondarySize = 0;
 		void* pSecondaryMemory = nullptr;
 
 	#if CRY_PLATFORM_DURANGO
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Wwise Implementation Audio Pool Secondary");
 		secondarySize = g_cvars.m_secondaryMemoryPoolSize << 10;
 
 		APU_ADDRESS temp;
@@ -64,17 +66,21 @@ class CEngineModule_CryAudioImplWwise : public CryAudio::IImplModule
 
 		gEnv->pAudioSystem->AddRequestListener(&CEngineModule_CryAudioImplWwise::OnAudioEvent, nullptr, ESystemEvents::ImplSet);
 		SRequestUserData const data(ERequestFlags::ExecuteBlocking | ERequestFlags::CallbackOnExternalOrCallingThread);
+
+		MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::Wwise::CImpl");
 		gEnv->pAudioSystem->SetImpl(new CImpl, data);
 		gEnv->pAudioSystem->RemoveRequestListener(&CEngineModule_CryAudioImplWwise::OnAudioEvent, nullptr);
 
+#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
 		if (m_bSuccess)
 		{
-			g_implLogger.Log(ELogType::Always, "CryAudioImplWwise loaded");
+			Cry::Audio::Log(ELogType::Always, "CryAudioImplWwise loaded");
 		}
 		else
 		{
-			g_implLogger.Log(ELogType::Error, "CryAudioImplWwise failed to load");
+			Cry::Audio::Log(ELogType::Error, "CryAudioImplWwise failed to load");
 		}
+#endif    // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
 		return m_bSuccess;
 	}

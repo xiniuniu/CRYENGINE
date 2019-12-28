@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DialogCHR.h"
@@ -30,8 +30,9 @@
 #include <Cry3DEngine/I3DEngine.h>
 #include <CryAnimation/ICryAnimation.h>
 #include <CryPhysics/IPhysicsDebugRenderer.h>
+#include <CryPhysics/physinterface.h>
 
-#include <FilePathUtil.h>
+#include <PathUtils.h>
 #include <QtViewPane.h>
 #include <Material/Material.h>
 #include <Material/MaterialManager.h>
@@ -43,7 +44,7 @@
 #include <Controls/QMenuComboBox.h>
 #include <Serialization/Decorators/EditorActionButton.h>
 
-#include <Serialization/QPropertyTree/QPropertyTree.h>
+#include <Serialization/QPropertyTreeLegacy/QPropertyTreeLegacy.h>
 
 #include <QTemporaryFile>
 #include <QTemporaryDir>
@@ -449,7 +450,10 @@ void CDialogCHR::UpdateCharacter()
 	}
 
 	m_pCharacter->m_pCharInstance = CreateTemporaryCharacter(skeletonFilePath, skinFilePath, QString());
-	m_pCharacter->m_pCharInstance->SetCharEditMode(m_pCharacter->m_pCharInstance->GetCharEditMode() | CA_CharacterTool);
+	if (m_pCharacter->m_pCharInstance)
+	{
+		m_pCharacter->m_pCharInstance->SetCharEditMode(m_pCharacter->m_pCharInstance->GetCharEditMode() | CA_CharacterAuxEditor);
+	}
 
 	m_pCharacter->m_pPoseModifier = CSkeletonPoseModifier::CreateClassInstance();
 
@@ -489,7 +493,7 @@ CDialogCHR::CDialogCHR(QWidget* pParent)
 	m_pPreviewModeWidget = new CPreviewModeWidget();
 	m_pViewportContainer->SetHeaderWidget(m_pPreviewModeWidget);
 
-	m_pPropertyTree = new QPropertyTree();
+	m_pPropertyTree = new QPropertyTreeLegacy();
 	m_pPropertyTree->setSliderUpdateDelay(0);
 
 	m_pModelProperties.reset(new CModelProperties(m_pPropertyTree));
@@ -729,6 +733,12 @@ void CDialogCHR::AssignScene(const SImportScenePayload* pUserData)
 	UpdateSkeleton();
 	UpdateSkin();
 	UpdateStatGeom();
+}
+
+void CDialogCHR::UnloadScene()
+{
+	CRY_ASSERT(m_pSceneModel);
+	m_pSceneModel->ClearScene();
 }
 
 const char* CDialogCHR::GetDialogName() const
@@ -1010,7 +1020,7 @@ void CDialogCHR::RenderCharacter(const SRenderContext& rc, ICharacterInstance* p
 	const SRenderingPassInfo& passInfo = *rc.passInfo;
 	gEnv->p3DEngine->PrecacheCharacter(NULL, 1.f, pCharInstance, pCharInstance->GetIMaterial(), localEntityMat, 0, 1.f, 4, true, passInfo);
 	pCharInstance->SetViewdir(rc.camera->GetViewdir());
-	pCharInstance->Render(rp, QuatTS(IDENTITY), passInfo);
+	pCharInstance->Render(rp, passInfo);
 }
 
 void CDialogCHR::RenderPhysics(const SRenderContext& rc, ICharacterInstance* pCharacter)
@@ -1127,11 +1137,14 @@ void CDialogCHR::OnViewportRender(const SRenderContext& rc)
 		RenderCharacter(rc, m_pCharacter->m_pCharInstance);
 		RenderPhysics(rc, m_pCharacter->m_pCharInstance);
 
-		for (int i = 0; i < GetScene()->GetNodeCount(); ++i)
+		if (FbxTool::CScene* pFbxScene = GetScene())
 		{
-			const FbxTool::SNode* const pFbxNode = GetScene()->GetNodeByIndex(i);
-			QuatT jointTransform = m_pSceneUserData->GetJointTransform(pFbxNode);
-			m_pCharacter->m_pPoseModifier->PoseJoint(pFbxNode->szName, jointTransform);
+			for (int i = 0; i < pFbxScene->GetNodeCount(); ++i)
+			{
+				const FbxTool::SNode* const pFbxNode = pFbxScene->GetNodeByIndex(i);
+				QuatT jointTransform = m_pSceneUserData->GetJointTransform(pFbxNode);
+				m_pCharacter->m_pPoseModifier->PoseJoint(pFbxNode->szName, jointTransform);
+			}
 		}
 
 		m_pCharacter->m_pCharInstance->GetISkeletonAnim()->PushPoseModifier(-1, m_pCharacter->m_pPoseModifier, "Skeleton pose modifier");

@@ -1,7 +1,7 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef __CREOCCLUSIONQUERY_H__
-#define __CREOCCLUSIONQUERY_H__
+#pragma once
+#include "RendElement.h"
 
 class CRenderMesh;
 
@@ -45,16 +45,11 @@ public:
 
 	virtual ~CREOcclusionQuery();
 
-	virtual void mfPrepare(bool bCheckOverflow);
-	virtual bool mfDraw(CShader* ef, SShaderPass* sfm);
 	virtual void mfReset();
-	virtual bool mfReadResult_Try(uint32 nDefaultNumSamples = 1);
-	virtual bool mfReadResult_Now();
+	virtual void mfReadResult_Try(uint32 nDefaultNumSamples = 1);
 
 	virtual void GetMemoryUsage(ICrySizer* pSizer) const
 	{
 		pSizer->AddObject(this, sizeof(*this));
 	}
 };
-
-#endif  // __CREOCCLUSIONQUERY_H__

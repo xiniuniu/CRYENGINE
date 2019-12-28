@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DialogCAF.h"
@@ -21,18 +21,18 @@
 
 // EditorCommon
 #include <CrySerialization/Decorators/Resources.h>
-#include <FilePathUtil.h>
+#include <PathUtils.h>
 #include <ThreadingUtils.h>
 
 // EditorQt
 #include "QViewportSettings.h"
 
 #include <CryAnimation/ICryAnimation.h>
-#include <Material\Material.h>
-#include <Material\MaterialManager.h>
+#include <Material/Material.h>
+#include <Material/MaterialManager.h>
 
-#include <Serialization/QPropertyTree/QPropertyTree.h>
-#include <QPropertyTree/ContextList.h>
+#include <Serialization/QPropertyTreeLegacy/QPropertyTreeLegacy.h>
+#include <QPropertyTreeLegacy/ContextList.h>
 
 #include "Serialization/Decorators/EditorActionButton.h"
 
@@ -633,6 +633,11 @@ void CDialogCAF::UpdateCharacter()
 			QtUtil::ToQString(m_pScene->m_material));
 	}
 
+	if (m_pScene->m_pCharInstance)
+	{
+		m_pScene->m_pCharInstance->SetCharEditMode(m_pScene->m_pCharInstance->GetCharEditMode() | CA_CharacterAuxEditor);
+	}
+
 	ReloadAnimationSet();
 
 	UpdateCurrentAnimation();
@@ -691,7 +696,7 @@ void CDialogCAF::OnViewportRender(const SRenderContext& rc)
 	auto pInstanceBase = m_pScene->m_pCharInstance;
 	gEnv->p3DEngine->PrecacheCharacter(NULL, 1.f, pInstanceBase, pInstanceBase->GetIMaterial(), m_LocalEntityMat, 0, 1.f, 4, true, passInfo);
 	pInstanceBase->SetViewdir(rc.camera->GetViewdir());
-	pInstanceBase->Render(rp, QuatTS(IDENTITY), passInfo);
+	pInstanceBase->Render(rp, passInfo);
 
 	DrawSkeleton(pAuxGeom, &m_pScene->m_pCharInstance->GetIDefaultSkeleton(), m_pScene->m_pCharInstance->GetISkeletonPose(),
 	             QuatT(IDENTITY), "", rc.viewport->GetState().cameraTarget);
@@ -767,7 +772,7 @@ bool CDialogCAF::SaveAs(SSaveContext& ctx)
 		saveState.clipName = clip.outputName;
 	}
 
-	const string targetDirPath = ctx.targetFilePath;
+	const string targetDirPath = PathUtil::GetPathWithoutFilename(ctx.targetFilePath);
 
 	const QString absOriginalFilePath = GetSceneManager().GetImportFile()->GetOriginalFilePath();
 	ThreadingUtils::Async([clipSaveStates, absOriginalFilePath, targetDirPath]()
@@ -917,10 +922,10 @@ void CDialogCAF::SetupUI()
 
 	m_pViewportContainer->GetDisplayOptionsWidget()->SetUserOptions(Serialization::SStruct(m_viewSettings), "viewSettings", "View");
 
-	m_pPropertyTree = new QPropertyTree();
+	m_pPropertyTree = new QPropertyTreeLegacy();
 	m_pPropertyTree->setArchiveContext(m_pSerializationContextList->Tail());
 	m_pPropertyTree->attach(Serialization::SStruct(*m_pSkeletonProperties.get()));
-	connect(m_pPropertyTree, &QPropertyTree::signalChanged, this, &CDialogCAF::MakeNamesUnique);
+	connect(m_pPropertyTree, &QPropertyTreeLegacy::signalChanged, this, &CDialogCAF::MakeNamesUnique);
 
 	m_pRootMotionNodePanel = new Private_DialogCAF::CRootMotionNodePanel();
 

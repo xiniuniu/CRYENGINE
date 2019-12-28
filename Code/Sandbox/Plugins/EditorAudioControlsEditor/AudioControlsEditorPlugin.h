@@ -1,46 +1,51 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <IEditor.h>
+#include "Common.h"
 #include <IPlugin.h>
-#include "AudioAssetsManager.h"
-#include "AudioAssetsExplorerModel.h"
-#include <IAudioSystemEditor.h>
-#include <CryAudio/IAudioInterfacesCommonData.h>
-#include <CrySandbox/CrySignal.h>
-
-namespace CryAudio
-{
-struct IObject;
-}
+#include <IEditor.h>
 
 namespace ACE
 {
-class CImplementationManager;
+enum class EReloadFlags : CryAudio::EnumFlagsType
+{
+	None = 0,
+	ReloadSystemControls = BIT(0),
+	ReloadImplData = BIT(1),
+	SendSignals = BIT(2),
+	BackupConnections = BIT(3), };
+CRY_CREATE_ENUM_FLAG_OPERATORS(EReloadFlags);
 
 class CAudioControlsEditorPlugin final : public IPlugin, public ISystemEventListener
 {
 public:
-	explicit CAudioControlsEditorPlugin();
+
+	CAudioControlsEditorPlugin(CAudioControlsEditorPlugin const&) = delete;
+	CAudioControlsEditorPlugin(CAudioControlsEditorPlugin&&) = delete;
+	CAudioControlsEditorPlugin& operator=(CAudioControlsEditorPlugin const&) = delete;
+	CAudioControlsEditorPlugin& operator=(CAudioControlsEditorPlugin&&) = delete;
+
+	CAudioControlsEditorPlugin();
 	virtual ~CAudioControlsEditorPlugin() override;
 
-	int32                          GetPluginVersion() override     { return 1; }
-	const char*                    GetPluginName() override        { return "Audio Controls Editor"; }
-	const char*                    GetPluginDescription() override { return "The Audio Controls Editor enables browsing and configuring audio events exposed from the audio middleware"; }
+	// IPlugin
+	virtual int32       GetPluginVersion() override     { return 1; }
+	virtual char const* GetPluginName() override        { return g_szEditorName; }
+	virtual char const* GetPluginDescription() override { return "The Audio Controls Editor enables browsing and configuring audio events exposed from the audio middleware"; }
+	// ~IPlugin
 
-	static void                    SaveModels();
-	static void                    ReloadModels(bool bReloadImplementation);
-	static void                    ReloadScopes();
-	static CAudioAssetsManager*    GetAssetsManager();
-	static CImplementationManager* GetImplementationManger();
-	static IAudioSystemEditor*     GetAudioSystemEditorImpl();
-	static void                    ExecuteTrigger(const string& sTriggerName);
-	static void                    StopTriggerExecution();
-	static uint                    GetLoadingErrorMask() { return s_loadingErrorMask; }
+	static void SaveData();
+	static void ReloadData(EReloadFlags const flags);
+	static void ExecuteTrigger(string const& triggerName);
+	static void ExecuteTriggerEx(string const& triggerName, XmlNodeRef const& node);
+	static void StopTriggerExecution();
+	static void OnAudioCallback(CryAudio::SRequestInfo const* const pRequestInfo);
 
-	static CCrySignal<void()> signalAboutToLoad;
-	static CCrySignal<void()> signalLoaded;
+	static CCrySignal<void()> SignalOnBeforeLoad;
+	static CCrySignal<void()> SignalOnAfterLoad;
+	static CCrySignal<void()> SignalOnBeforeSave;
+	static CCrySignal<void()> SignalOnAfterSave;
 
 private:
 
@@ -48,12 +53,9 @@ private:
 	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam) override;
 	// ~ISystemEventListener
 
-	static CAudioAssetsManager    s_assetsManager;
-	static std::set<string>       s_currentFilenames;
-	static CryAudio::IObject*     s_pIAudioObject;
-	static CryAudio::ControlId    s_audioTriggerId;
+	static void ReloadImplData(EReloadFlags const flags);
 
-	static CImplementationManager s_implementationManager;
-	static uint                   s_loadingErrorMask;
+	static FileNames           s_currentFilenames;
+	static CryAudio::ControlId s_audioTriggerId;
 };
 } // namespace ACE

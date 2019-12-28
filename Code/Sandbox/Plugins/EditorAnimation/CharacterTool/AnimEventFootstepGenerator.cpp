@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -69,7 +69,7 @@ static bool SampleAnimation(BoneSampleMap* framesPerChannel, float* animationLen
 	{
 		const float fNormalizedTime = float(frame) * fInvNbFrames;
 
-		character->SetCharEditMode(CA_CharacterTool);
+		character->SetCharEditMode(CA_CharacterAuxEditor);
 		skeletonPose.SetForceSkeletonUpdate(1);
 
 		skeletonAnimation.SetLayerNormalizedTime(0, fNormalizedTime);
@@ -194,7 +194,7 @@ void FootstepGenerationParameters::Serialize(IArchive& ar)
 		ar(rightFootEvent, "rightFootEvent", "Right");
 
 		ar(generateFoleys, "generateFoleys", "Generate Foleys");
-		ar(Slider(foleyDelayFrames, 0, 40), "foleyDelayFrames", generateFoleys ? "Foley Delay (Frames)" : 0);
+		ar(Serialization::Decorators::Range(foleyDelayFrames, 0, 40), "foleyDelayFrames", generateFoleys ? "Foley Delay (Frames)" : 0);
 		ar(leftShuffleFoleyEvent, "leftShuffleFoleyEvent", generateFoleys ? "Left Foley" : 0);
 		ar(rightShuffleFoleyEvent, "rightShuffleFoleyEvent", generateFoleys ? "Right Foley" : 0);
 		ar.closeBlock();
@@ -238,9 +238,6 @@ void FootstepGenerationParameters::SetRightFootJoint(const char* joint)
 //////////////////////////////////////////////////////////////////////////
 bool GenerateFootsteps(AnimationContent* content, string* errorMessage, ICharacterInstance* character, const char* animationName, const FootstepGenerationParameters& params)
 {
-	// Character path (to create intermediate char instances)
-	const char* szFilePath = character->GetFilePath();
-
 	// Sample the animation
 	IDefaultSkeleton& skeleton = character->GetIDefaultSkeleton();
 	float footHeight = params.footHeightMM * 0.001f;

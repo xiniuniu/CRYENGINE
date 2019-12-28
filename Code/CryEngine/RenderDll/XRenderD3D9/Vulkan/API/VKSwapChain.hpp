@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -13,16 +13,17 @@ namespace NCryVulkan
 
 class CSwapChain : public CRefCounted
 {
-	static bool GetSupportedSurfaceFormats(VkPhysicalDevice& physicalDevice, VkSurfaceKHR& surface, std::vector<VkSurfaceFormatKHR>& outFormatsSupported);
-	static bool GetSupportedPresentModes(VkPhysicalDevice& physicalDevice, VkSurfaceKHR& surface, std::vector<VkPresentModeKHR>& outPresentModes);
+public:
+	static bool GetSupportedSurfaceFormats(const VkPhysicalDevice& physicalDevice, const VkSurfaceKHR& surface, std::vector<VkSurfaceFormatKHR>& outFormatsSupported);
+	static std::vector<VkPresentModeKHR> GetSupportedPresentModes(const VkPhysicalDevice& physicalDevice, const VkSurfaceKHR& surface);
 
 public:
-	static _smart_ptr<CSwapChain> Create(CCommandListPool& commandQueue, VkSwapchainKHR KHRSwapChain, uint32_t numberOfBuffers, uint32_t width, uint32_t height, VkFormat format, VkPresentModeKHR presentMode, VkImageUsageFlags imageUsage);
-	static _smart_ptr<CSwapChain> Create(CCommandListPool& commandQueue, VkSwapchainKHR KHRSwapChain, uint32_t numberOfBuffers, uint32_t width, uint32_t height, VkFormat format, VkPresentModeKHR presentMode, VkImageUsageFlags imageUsage, VkSurfaceTransformFlagBitsKHR transform);
+	static _smart_ptr<CSwapChain> Create(CCommandListPool& commandQueue, VkSwapchainKHR KHRSwapChain, uint32_t numberOfBuffers, uint32_t width, uint32_t height, VkSurfaceKHR surface, VkFormat format, VkPresentModeKHR presentMode, VkImageUsageFlags imageUsage);
+	static _smart_ptr<CSwapChain> Create(CCommandListPool& commandQueue, VkSwapchainKHR KHRSwapChain, uint32_t numberOfBuffers, uint32_t width, uint32_t height, VkSurfaceKHR surface, VkFormat format, VkPresentModeKHR presentMode, VkImageUsageFlags imageUsage, VkSurfaceTransformFlagBitsKHR transform);
 	static _smart_ptr<CSwapChain> Create(CCommandListPool& commandQueue, VkSwapchainCreateInfoKHR* pInfo);
 
 protected:
-	CSwapChain(CCommandListPool& commandQueue, VkSwapchainKHR KHRSwapChain, VkSwapchainCreateInfoKHR* pInfo);
+	CSwapChain(CCommandListPool& commandQueue, VkSurfaceKHR KHRSurface, VkSwapchainKHR KHRSwapChain, VkSwapchainCreateInfoKHR* pInfo);
 
 	virtual ~CSwapChain();
 
@@ -30,6 +31,11 @@ public:
 	ILINE VkSwapchainKHR GetKHRSwapChain() const
 	{
 		return m_KHRSwapChain;
+	}
+
+	ILINE VkSurfaceKHR GetKHRSurface() const
+	{
+		return m_KHRSurface;
 	}
 
 	ILINE const VkSwapchainCreateInfoKHR& GetKHRSwapChainInfo() const
@@ -55,7 +61,7 @@ public:
 		{
 			m_asyncQueue.FlushNextPresent(); VK_ASSERT(!IsPresentScheduled(), "Flush didn't dry out all outstanding Present() calls!");
 			VkResult result = vkAcquireNextImageKHR(m_pDevice->GetVkDevice(), m_KHRSwapChain, ~0ULL, Semaphore, VK_NULL_HANDLE, &m_nCurrentBackBufferIndex);
-			VK_ASSERT(result == VK_SUCCESS);
+			CRY_VULKAN_VERIFY(result == VK_SUCCESS, "");
 			m_bChangedBackBufferIndex = false;
 		}
 		// ... and inject it as sync-primitive into the core-command-list - which is the one active at the moment of this call (which can be mid-frame)
@@ -95,6 +101,7 @@ public:
 	void    UnblockBuffers(CCommandList* pCommandList);
 	void    VerifyBufferCounters();
 	void    ForfeitBuffers();
+	void    FlushAndWaitForBuffers();
 
 private:
 	CDevice*                 m_pDevice;
@@ -109,6 +116,7 @@ private:
 	mutable uint32_t         m_semaphoreIndex = 0;
 
 	VkResult                 m_presentResult;
+	VkSurfaceKHR             m_KHRSurface;
 	VkSwapchainKHR           m_KHRSwapChain;
 
 	std::vector<CImageResource> m_BackBuffers;

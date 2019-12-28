@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -69,6 +69,12 @@ public:
 		m_asyncQueue.Present(m_pDXGISwapChain, &m_PresentResult, SyncInterval, Flags, m_Desc, GetCurrentBackbufferIndex());
 		m_bChangedBackBufferIndex = true;
 	}
+	
+	ILINE HRESULT SetFullscreenState(BOOL Fullscreen, IDXGIOutput4ToCall* pTarget)
+	{
+		m_Desc.Windowed = !Fullscreen;
+		return m_pDXGISwapChain->SetFullscreenState(Fullscreen, pTarget);
+	}
 
 	HRESULT GetLastPresentReturnValue() { return m_PresentResult; }
 
@@ -79,6 +85,7 @@ public:
 	void    UnblockBuffers(NCryDX12::CCommandList* pCommandList);
 	void    VerifyBufferCounters();
 	void    ForfeitBuffers();
+	void    FlushAndWaitForBuffers();
 
 private:
 	CAsyncCommandQueue&  m_asyncQueue;

@@ -8,6 +8,7 @@ add_sources("NoUberFile"
 	SOURCE_GROUP "Root"
 		"MFCToolsPlugin.cpp"
 		"MFCToolsPlugin.h"
+		"MFCToolsDefines.h"
 		"StdAfx.h"
 		"StdAfx.cpp"
 		"Resource.h"
@@ -101,6 +102,8 @@ add_sources("Editor_Uber_Dialogs.cpp"
 		"Dialogs/GenericSelectItemDialog.h"
 		"Dialogs/ToolbarDialog.cpp"
 		"Dialogs/ToolbarDialog.h"
+		"Dialogs/SourceControlAddDlg.cpp"
+		"Dialogs/SourceControlAddDlg.h"
 		"Dialogs/SourceControlDescDlg.cpp"
 		"Dialogs/SourceControlDescDlg.h"
 		"Dialogs/SelectMissionObjectiveDialog.cpp"
@@ -129,6 +132,8 @@ add_sources("Editor_Uber_Dialogs.cpp"
 		"Util/UIEnumerations.h"
 		"Util/MFCUtil.h"
 		"Util/MFCUtil.cpp"
+		"Util/QParentWndWidget.h"
+		"Util/QParentWndWidget.cpp"
 
 )
 
@@ -151,12 +156,13 @@ end_sources()
 CryEngineModule(MFCToolsPlugin EDITOR_COMPILE_SETTINGS PCH "StdAfx.cpp" SOLUTION_FOLDER "Sandbox/Plugins")
 
 target_compile_definitions(${THIS_PROJECT} PRIVATE
-	-DPLUGIN_EXPORTS
 	-DEDITOR_COMMON_IMPORTS 
 	-DNOT_USE_CRY_MEMORY_MANAGER
 )
 target_link_libraries(${THIS_PROJECT} PRIVATE EditorCommon tiff)
 
-target_include_directories( ${THIS_PROJECT} PRIVATE	"${SDK_DIR}/squish-ccr")
+target_include_directories( ${THIS_PROJECT} PRIVATE "${SDK_DIR}/squish-ccr")
+target_include_directories( ${THIS_PROJECT} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 use_xt()
+

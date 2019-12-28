@@ -1,7 +1,6 @@
 #pragma once
 
 #include <CrySystem/ICryPlugin.h>
-#include <CryGame/IGameFramework.h>
 #include <CryEntitySystem/IEntityClass.h>
 #include <CryNetwork/INetwork.h>
 
@@ -11,22 +10,20 @@ class CPlayerComponent;
 // An instance of CGamePlugin is automatically created when the library is loaded
 // We then construct the local player entity and CPlayerComponent instance when OnClientConnectionReceived is first called.
 class CGamePlugin 
-	: public ICryPlugin
+	: public Cry::IEnginePlugin
 	, public ISystemEventListener
 	, public INetworkedClientListener
 {
 public:
-	CRYINTERFACE_SIMPLE(ICryPlugin)
-	CRYGENERATE_SINGLETONCLASS_GUID(CGamePlugin, "Game_Blank", "{FC9BD884-49DE-4494-9D64-191734BBB7E3}"_cry_guid)
+	CRYINTERFACE_SIMPLE(Cry::IEnginePlugin)
+	CRYGENERATE_SINGLETONCLASS_GUID(CGamePlugin, "FirstPersonShooter", "{FC9BD884-49DE-4494-9D64-191734BBB7E3}"_cry_guid)
 
 	virtual ~CGamePlugin();
 	
-	// ICryPlugin
-	virtual const char* GetName() const override { return "GamePlugin"; }
+	// Cry::IEnginePlugin
 	virtual const char* GetCategory() const override { return "Game"; }
 	virtual bool Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override;
-	virtual void OnPluginUpdate(EPluginUpdateType updateType) override {}
-	// ~ICryPlugin
+	// ~Cry::IEnginePlugin
 
 	// ISystemEventListener
 	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam) override;
@@ -48,6 +45,16 @@ public:
 	// Return true to allow disconnection, otherwise false to keep client.
 	virtual bool OnClientTimingOut(int channelId, EDisconnectionCause cause, const char* description) override { return true; }
 	// ~INetworkedClientListener
+
+	// Helper function to call the specified callback for every player in the game
+	void IterateOverPlayers(std::function<void(CPlayerComponent& player)> func) const;
+
+	// Helper function to get the CGamePlugin instance
+	// Note that CGamePlugin is declared as a singleton, so the CreateClassInstance will always return the same pointer
+	static CGamePlugin* GetInstance()
+	{
+		return cryinterface_cast<CGamePlugin>(CGamePlugin::s_factory.CreateClassInstance().get());
+	}
 
 protected:
 	// Map containing player components, key is the channel id received in OnClientConnectionReceived

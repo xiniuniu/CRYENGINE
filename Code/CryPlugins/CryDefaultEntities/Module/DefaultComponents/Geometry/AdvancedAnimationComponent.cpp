@@ -89,7 +89,7 @@ namespace Cry
 			ResetCharacter();
 		}
 
-		void CAdvancedAnimationComponent::ProcessEvent(SEntityEvent& event)
+		void CAdvancedAnimationComponent::ProcessEvent(const SEntityEvent& event)
 		{
 			if (event.event == ENTITY_EVENT_UPDATE)
 			{
@@ -160,31 +160,46 @@ namespace Cry
 			{
 				LoadFromDisk();
 				ResetCharacter();
+
+				// Update Editor UI to show the default object material
+				if (m_materialPath.value.empty() && m_pCachedCharacter != nullptr)
+				{
+					if (IMaterial* pMaterial = m_pCachedCharacter->GetMaterial())
+					{
+						m_materialPath = pMaterial->GetName();
+					}
+				}
 			}
 
 			CBaseMeshComponent::ProcessEvent(event);
 		}
 
-		uint64 CAdvancedAnimationComponent::GetEventMask() const
+		Cry::Entity::EventFlags CAdvancedAnimationComponent::GetEventMask() const
 		{
-			uint64 bitFlags = CBaseMeshComponent::GetEventMask() | BIT64(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED);
+			Cry::Entity::EventFlags bitFlags = CBaseMeshComponent::GetEventMask() | ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED;
 
 			if (m_pPoseAligner != nullptr)
 			{
-				bitFlags |= BIT64(ENTITY_EVENT_UPDATE);
+				bitFlags |= ENTITY_EVENT_UPDATE;
 			}
 
 			if (m_pActionController != nullptr)
 			{
-				bitFlags |= BIT64(ENTITY_EVENT_UPDATE) | BIT64(ENTITY_EVENT_ANIM_EVENT);
+				bitFlags |= ENTITY_EVENT_UPDATE | ENTITY_EVENT_ANIM_EVENT;
 			}
 
 			return bitFlags;
 		}
 
-		void CAdvancedAnimationComponent::SetCharacterFile(const char* szPath)
+		void CAdvancedAnimationComponent::SetCharacterFile(const char* szPath, bool applyImmediately)
 		{
 			m_characterFile = szPath;
+			LoadFromDisk();
+
+			if (applyImmediately)
+			{
+				ResetCharacter();
+			}
 		}
 
 		void CAdvancedAnimationComponent::SetMannequinAnimationDatabaseFile(const char* szPath)
@@ -205,6 +220,27 @@ namespace Cry
 		void CAdvancedAnimationComponent::SetDefaultFragmentName(const char* szName)
 		{
 			m_defaultScopeSettings.m_fragmentName = szName;
+		}
+
+		bool CAdvancedAnimationComponent::SetMaterial(int slotId, const char* szMaterial)
+		{
+			if (slotId == GetEntitySlotId())
+			{
+				if (IMaterial* pMaterial = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial(szMaterial, false))
+				{
+					m_materialPath = szMaterial;
+					m_pEntity->SetSlotMaterial(GetEntitySlotId(), pMaterial);
+				}
+				else if (szMaterial[0] == '\0')
+				{
+					m_materialPath.value.clear();
+					m_pEntity->SetSlotMaterial(GetEntitySlotId(), nullptr);
+				}
+
+				return true;
+			}
+
+			return false;
 		}
 	}
 }

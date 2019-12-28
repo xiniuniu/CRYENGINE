@@ -1,12 +1,16 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
-#include "../EditorCommon/Timeline.h"
-#include "../EditorCommon/TimelineContent.h"
+#include "Timeline.h"
+#include "TimelineContent.h"
 #include "PlaybackPanel.h"
 #include "CharacterDocument.h"
 #include "Controls/QMenuComboBox.h"
+
+#include <Commands/QCommandAction.h>
+#include <Commands/ICommandManager.h>
+#include <IEditor.h>
 
 #include <QPushButton>
 #include <QLineEdit>
@@ -14,6 +18,7 @@
 #include <QBoxLayout>
 #include <QLabel>
 #include <QToolButton>
+#include <QClipboard>
 #include <QMenu>
 
 #include "AnimationList.h"
@@ -23,6 +28,8 @@
 #include "CharacterToolSystem.h"
 #include "CharacterGizmoManager.h"
 #include <CryIcon.h>
+#include "Util/Clipboard.h"
+#include "AnimEvent.h"
 
 namespace CharacterTool
 {
@@ -153,16 +160,26 @@ PlaybackPanel::PlaybackPanel(QWidget* parent, System* system, AnimEventPresetPan
 		}
 
 		m_timeline = new CTimeline(this);
+		m_timeline->addAction(GetIEditor()->GetICommandManager()->GetCommandAction("general.copy"));
+		m_timeline->addAction(GetIEditor()->GetICommandManager()->GetCommandAction("general.paste"));
+		m_timeline->addAction(GetIEditor()->GetICommandManager()->GetCommandAction("general.cut"));
+		m_timeline->addAction(GetIEditor()->GetICommandManager()->GetCommandAction("general.delete"));
+		m_timeline->addAction(GetIEditor()->GetICommandManager()->GetCommandAction("general.undo"));
+		m_timeline->addAction(GetIEditor()->GetICommandManager()->GetCommandAction("general.redo"));
 		m_timeline->SetContent(m_timelineContent.get());
-		connect(m_timeline, &CTimeline::SignalScrub, this, &PlaybackPanel::OnTimelineScrub);
-		connect(m_timeline, &CTimeline::SignalSelectionChanged, this, &PlaybackPanel::OnTimelineSelectionChanged);
-		connect(m_timeline, &CTimeline::SignalContentChanged, this, &PlaybackPanel::OnTimelineChanged);
-		connect(m_timeline, &CTimeline::SignalPlay, this, &PlaybackPanel::OnTimelinePlay);
-		connect(m_timeline, &CTimeline::SignalNumberHotkey, this, &PlaybackPanel::OnTimelineHotkey);
-		connect(m_timeline, &CTimeline::SignalUndo, this, &PlaybackPanel::OnTimelineUndo);
-		connect(m_timeline, &CTimeline::SignalRedo, this, &PlaybackPanel::OnTimelineRedo);
-		m_playIcon = CryIcon("icons:Animation/Play.ico");
-		m_pauseIcon = CryIcon("icons:Animation/Pause.ico");
+		QObject::connect(m_timeline, &CTimeline::SignalScrub, this, &PlaybackPanel::OnTimelineScrub);
+		QObject::connect(m_timeline, &CTimeline::SignalSelectionChanged, this, &PlaybackPanel::OnTimelineSelectionChanged);
+		QObject::connect(m_timeline, &CTimeline::SignalContentChanged, this, &PlaybackPanel::OnTimelineChanged);
+		QObject::connect(m_timeline, &CTimeline::SignalPlay, this, &PlaybackPanel::OnTimelinePlay);
+		QObject::connect(m_timeline, &CTimeline::SignalNumberHotkey, this, &PlaybackPanel::OnTimelineHotkey);
+		QObject::connect(m_timeline, &CTimeline::SignalUndo, this, &PlaybackPanel::OnTimelineUndo);
+		QObject::connect(m_timeline, &CTimeline::SignalRedo, this, &PlaybackPanel::OnTimelineRedo);
+		QObject::connect(m_timeline, &CTimeline::SignalCopy, this, &PlaybackPanel::OnTimelineCopy);
+		QObject::connect(m_timeline, &CTimeline::SignalPaste, this, &PlaybackPanel::OnTimelinePaste);
+		m_playIcon = CryIcon("icons:common/animation_play.ico");
+		m_pauseIcon = CryIcon("icons:common/animation_pause.ico");
+		m_timeline->SetKeySize(16);
+		m_timeline->SetTimelinePadding(10);
 		m_timeline->SetSizeToContent(true);
 		topHBox->addWidget(m_timeline, 1);
 		m_activeControls.push_back(m_timeline);
@@ -209,6 +226,72 @@ void PlaybackPanel::OnTimelineRedo()
 	if (!entries[0])
 		return;
 	m_system->explorerData->Redo(entries);
+}
+
+struct AnimEventsSerializeProxy {
+	AnimEvents events;
+	bool Serialize(Serialization::IArchive& ar) { return ar(events, "EventsList"); }
+};
+
+void PlaybackPanel::OnTimelineCopy(SAnimTime time, STimelineTrack* pTrack)
+{
+	CryLog("[CT] Received Timeline Copy Event");
+
+	SEntry<AnimationContent>* animation = GetActiveAnimationEntry(m_system);
+	if (!animation)
+		return;
+
+	AnimEvents& events = animation->content.events;
+
+	AnimEventsSerializeProxy serializeProxy;
+
+	AnimEvents& copiedEvents = serializeProxy.events;
+
+	for (int eventIdx : m_selectedEvents)
+	{
+		copiedEvents.push_back(events[eventIdx]);
+	}
+
+	if (!copiedEvents.empty())
+	{
+		CClipboard clipboard;
+		XmlNodeRef node = Serialization::SaveXmlNode(serializeProxy, "CopyAnimEvents");
+		clipboard.Put(node, "Character Tool Animation Events");
+	}
+}
+
+void PlaybackPanel::OnTimelinePaste(SAnimTime time, STimelineTrack* pTrack)
+{
+	CryLog("[CT] Received Timeline Paste Event");
+
+	AnimEventsSerializeProxy serializeProxy;
+
+	AnimEvents& pastedEvents = serializeProxy.events;
+	CClipboard clipboard;
+	if (!strcmp("Character Tool Animation Events", clipboard.GetTitle()) && clipboard.Get().isValid())
+	{
+		if (Serialization::LoadXmlNode(serializeProxy, clipboard.Get()) && !pastedEvents.empty())
+		{
+			std::sort(pastedEvents.begin(), pastedEvents.end(), [](auto& a, auto& b) { return a.startTime < b.startTime; });
+			float offset = TimelineTimeToAnimEventTime(time) - pastedEvents[0].startTime;
+
+			for (AnimEvent& ae : pastedEvents)
+			{
+				ae.startTime += offset;
+				ae.endTime += offset;
+			}
+
+			SEntry<AnimationContent>* animation = GetActiveAnimationEntry(m_system);
+			if (!animation)
+				return;
+
+			AnimEvents& events = animation->content.events;
+			events.insert(events.end(), pastedEvents.begin(), pastedEvents.end());
+
+			WriteTimeline();
+			OnTimelineChanged(false);
+		}
+	}
 }
 
 void PlaybackPanel::OnTimelineSelectionChanged(bool continuous)
@@ -404,7 +487,7 @@ void PlaybackPanel::OnDocumentActiveAnimationSwitched()
 void PlaybackPanel::OnPlaybackTimeChanged()
 {
 	float time = m_system->document->PlaybackTime();
-	float duration = m_system->document->PlaybackDuration();
+	float duration = m_system->document->MaxPlaybackDurationOfAllEnabledLayers();
 	float normalizedTime = duration != 0.0f ? time / duration : time;
 
 	bool timeChanged = false;
@@ -419,6 +502,7 @@ void PlaybackPanel::OnPlaybackTimeChanged()
 	{
 		m_duration = duration;
 		durationChanged = true;
+		ResetTimelineZoom();
 	}
 
 	UpdateTimeUnitsUI(timeChanged, durationChanged);
@@ -474,7 +558,6 @@ float PlaybackPanel::FrameRate() const
 
 void PlaybackPanel::UpdateTimeUnitsUI(bool timeChanged, bool durationChanged)
 {
-	float time = m_normalizedTime;
 	float duration = m_duration;
 	int numFrames = int(duration * FrameRate() + 0.5f);
 
@@ -581,6 +664,11 @@ void PlaybackPanel::Serialize(Serialization::IArchive& ar)
 	}
 }
 
+void PlaybackPanel::ResetTimelineZoom()
+{
+	m_timeline->ZoomToTimeRange(0.0f, m_duration);
+}
+
 void PlaybackPanel::WriteTimeline()
 {
 	m_timelineContent->track.tracks.resize(1, new STimelineTrack());
@@ -629,7 +717,7 @@ void PlaybackPanel::WriteTimeline()
 			eventCopy.startTime = -1.0f;
 			eventCopy.endTime = -1.0f;
 			SerializeToMemory(&e.userSideLoad, Serialization::SStruct(eventCopy));
-			unsigned int hash = CCrc32::Compute(e.userSideLoad.data(), e.userSideLoad.size());
+			unsigned int hash = CCrc32::Compute(static_cast<void*>(e.userSideLoad.data()), e.userSideLoad.size());
 			EventContentToColorMap::const_iterator it = std::lower_bound(eventContentToColor.begin(), eventContentToColor.end(), std::make_pair(hash, ColorB()),
 			                                                             [&](const std::pair<unsigned int, ColorB>& a, const std::pair<unsigned int, ColorB>& b) { return a.first < b.first; }
 			                                                             );
@@ -642,7 +730,6 @@ void PlaybackPanel::WriteTimeline()
 		}
 	}
 
- 	m_timeline->ZoomToTimeRange(track.startTime, track.endTime);
 	m_timeline->ContentUpdated();
 }
 

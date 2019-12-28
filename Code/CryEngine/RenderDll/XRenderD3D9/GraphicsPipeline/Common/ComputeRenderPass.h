@@ -1,8 +1,6 @@
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
-#include <array>
-#include <atomic>
 
 #include "RenderPassBase.h"
 
@@ -30,23 +28,10 @@ public:
 
 public:
 	CComputeRenderPass(EPassFlags flags = eFlags_None);
+	CComputeRenderPass(CGraphicsPipeline* pGraphicsPipeline, EPassFlags flags = eFlags_None);
 
-	bool InputChanged(int var0 = 0, int var1 = 0, int var2 = 0, int var3 = 0)
-	{
-		bool bChanged = IsDirty() || 
-		                var0 != m_inputVars[0] || var1 != m_inputVars[1] ||
-		                var2 != m_inputVars[2] || var3 != m_inputVars[3];
-
-		if (bChanged)
-		{
-			m_inputVars[0] = var0;
-			m_inputVars[1] = var1;
-			m_inputVars[2] = var2;
-			m_inputVars[3] = var3;
-		}
-
-		return bChanged;
-	}
+	bool IsDirty() const override final;
+	using CRenderPassBase::IsDirty;
 
 	void SetOutputUAV(uint32 slot, CTexture* pTexture, ResourceViewHandle resourceViewID = EDefaultResourceViews::UnorderedAccess, ::EShaderStage shaderStages = EShaderStage_Compute);
 	void SetOutputUAV(uint32 slot, CGpuBuffer* pBuffer, ResourceViewHandle resourceViewID = EDefaultResourceViews::UnorderedAccess, ::EShaderStage shaderStages = EShaderStage_Compute);
@@ -58,11 +43,11 @@ public:
 	void SetBuffer(uint32 slot, CGpuBuffer* pBuffer);
 	void SetSampler(uint32 slot, SamplerStateHandle sampler);
 	void SetInlineConstantBuffer(uint32 slot, CConstantBuffer* pConstantBuffer);
-	void SetConstant(const CCryNameR& paramName, const Vec4 param);
+	void SetConstantBuffer(uint32 slot, CConstantBuffer* pConstantBuffer);
+	void SetConstant(const CCryNameR& paramName, const Vec4& param);
+	void SetConstant(const CCryNameR& paramName, const Matrix44& param);
 	void SetConstantArray(const CCryNameR& paramName, const Vec4 params[], uint32 numParams);
-
-	bool IsDirty() const;
-
+	void SetGraphicsPipeline(CGraphicsPipeline* pGraphicsPipeline) { m_pGraphicsPipeline = pGraphicsPipeline; }
 	void PrepareResourcesForUse(CDeviceCommandListRef RESTRICT_REFERENCE commandList);
 
 	void BeginConstantUpdate();
@@ -82,10 +67,8 @@ private:
 	static bool OnResourceInvalidated(void* pThis, SResourceBindPoint bindPoint, UResourceReference pResource, uint32 flags) threadsafe;
 
 	typedef SDeviceObjectHelpers::CShaderConstantManager ConstantManager;
+
 private:
-
-	int                      m_inputVars[4];
-
 	EPassFlags               m_flags;
 	EDirtyFlags              m_dirtyMask;
 	CShader*                 m_pShader;
@@ -101,6 +84,8 @@ private:
 	int                      m_currentPsoUpdateCount;
 
 	ConstantManager          m_constantManager;
+
+	CGraphicsPipeline*       m_pGraphicsPipeline;
 
 	bool                     m_bPendingConstantUpdate;
 	bool                     m_bCompiled;
@@ -147,10 +132,20 @@ inline void CComputeRenderPass::SetInlineConstantBuffer(uint32 slot, CConstantBu
 		m_dirtyMask |= eDirty_ResourceLayout;
 }
 
-inline void CComputeRenderPass::SetConstant(const CCryNameR& paramName, const Vec4 param)
+inline void CComputeRenderPass::SetConstantBuffer(uint32 slot, CConstantBuffer* pConstantBuffer)
+{
+	m_resourceDesc.SetConstantBuffer(EConstantBufferShaderSlot(slot), pConstantBuffer, EShaderStage_Compute);
+}
+
+inline void CComputeRenderPass::SetConstant(const CCryNameR& paramName, const Vec4& param)
 {
 	CRY_ASSERT(m_bPendingConstantUpdate);
 	m_constantManager.SetNamedConstant(paramName, param, eHWSC_Compute);
+}
+
+inline void CComputeRenderPass::SetConstant(const CCryNameR& paramName, const Matrix44& param)
+{
+	SetConstantArray(paramName, reinterpret_cast<const Vec4*>(param.GetData()), 4);
 }
 
 inline void CComputeRenderPass::SetConstantArray(const CCryNameR& paramName, const Vec4 params[], uint32 numParams)

@@ -1,5 +1,6 @@
 #include "StdAfx.h"
 #include "LineConstraint.h"
+#include <CryRenderer/IRenderAuxGeom.h>
 
 namespace Cry
 {
@@ -32,21 +33,22 @@ namespace Cry
 			}
 		}
 
-		CLineConstraintComponent::~CLineConstraintComponent()
-		{
-			Remove();
-		}
-
 		void CLineConstraintComponent::Initialize()
 		{
 			Reset();
+		}
+
+		void CLineConstraintComponent::OnShutDown()
+		{
+			Remove();
 		}
 
 		void CLineConstraintComponent::Reset()
 		{
 			if (m_bActive)
 			{
-				ConstrainToPoint(!m_bLockRotation);
+				auto attach = m_attacher.FindAttachments(this);
+				ConstrainTo(attach.first, m_attacher.noAttachColl, !m_bLockRotation, attach.second);
 			}
 			else
 			{
@@ -54,26 +56,63 @@ namespace Cry
 			}
 		}
 
-		void CLineConstraintComponent::ProcessEvent(SEntityEvent& event)
+		void CLineConstraintComponent::ProcessEvent(const SEntityEvent& event)
 		{
-			if (event.event == ENTITY_EVENT_START_GAME)
+			if (event.event == ENTITY_EVENT_START_GAME || event.event == ENTITY_EVENT_LAYER_UNHIDE)
 			{
 				Reset();
 			}
 			else if (event.event == ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED)
 			{
+				m_axis = m_axis.Normalize();
+
 				m_pEntity->UpdateComponentEventMask(this);
 
 				Reset();
 			}
+			else if (event.event == ENTITY_EVENT_PHYSICAL_TYPE_CHANGED)
+			{
+				m_constraintIds.clear();
+			}
 		}
 
-		uint64 CLineConstraintComponent::GetEventMask() const
+		Cry::Entity::EventFlags CLineConstraintComponent::GetEventMask() const
 		{
-			uint64 bitFlags = m_bActive ? BIT64(ENTITY_EVENT_START_GAME) : 0;
-			bitFlags |= BIT64(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED);
+			Cry::Entity::EventFlags bitFlags = m_bActive ? (ENTITY_EVENT_START_GAME | ENTITY_EVENT_LAYER_UNHIDE | ENTITY_EVENT_PHYSICAL_TYPE_CHANGED) : Cry::Entity::EventFlags();
+			bitFlags |= ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED;
 
 			return bitFlags;
 		}
+
+#ifndef RELEASE
+		void CLineConstraintComponent::Render(const IEntity& entity, const IEntityComponent& component, SEntityPreviewContext &context) const
+		{
+			if (context.bSelected)
+			{
+				Vec3 axis = m_axis * m_pEntity->GetRotation().GetInverted();
+
+				Vec3 pos1 = m_pEntity->GetSlotWorldTM(GetEntitySlotId()).GetTranslation(), pos2 = pos1;
+				if (gEnv->pPhysicalWorld->GetPhysVars()->lastTimeStep && m_pEntity->GetPhysicalEntity() && !m_constraintIds.empty())
+				{
+					pe_status_constraint sc;
+					sc.id = m_constraintIds[0].second;
+					if (m_pEntity->GetPhysicalEntity()->GetStatus(&sc) && (pos1 - sc.pt[0]).len2() > sqr(0.001f))
+					{
+						pos1 = pos2 = sc.pt[0];
+						axis = sc.n;
+					}
+				}
+				pos1.x += m_limitMin * axis.x;
+				pos1.y += m_limitMin * axis.y;
+				pos1.z += m_limitMin * axis.z;
+
+				pos2.x += m_limitMax * axis.x;
+				pos2.y += m_limitMax * axis.y;
+				pos2.z += m_limitMax * axis.z;
+
+				gEnv->pAuxGeomRenderer->DrawLine(pos1, context.debugDrawInfo.color, pos2, context.debugDrawInfo.color, 10.0f);
+			}
+		}
+#endif
 	}
 }

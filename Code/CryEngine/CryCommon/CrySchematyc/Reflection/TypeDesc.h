@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Use Schematyc::GetTypeDesc<TYPE>() to get descriptor for a specific type.
 // Calling Schematyc::GetTypeDesc where TYPE is not reflected will result in the following compile error: 'Type must be reflected, see TypeDesc.h for details!'
@@ -21,6 +21,7 @@
 #pragma once
 
 #include <CrySerialization/Enum.h>
+#include <CryMemory/AddressHelpers.h>
 
 #include "CrySchematyc/Reflection/TypeOperators.h"
 #include "CrySchematyc/Utils/EnumFlags.h"
@@ -321,6 +322,23 @@ public:
 
 	CClassMemberDesc& SetCustomSerializer(const STypeOperators::Serialize& serializeFunction) { m_serialize = serializeFunction; return *this; };
 
+	// #netentity First iteration of networked flags.
+	// NetSync for lifetime replication, SpawnSync for spawn data (before Init() on the remote side).
+	CClassMemberDesc&      EnableNetSync(bool doNetSync, bool doNetSpawnSync, int32 netPolicy)
+	{
+		m_doNetSync = doNetSync;
+		m_doNetSpawnSync = doNetSpawnSync;
+		m_netPolicy = netPolicy;
+		return *this;
+	};
+	bool                   IsNetSynced() const { return m_doNetSync && GetTypeDesc().GetOperators().netSerialize != nullptr; };
+	bool                   IsNetSyncAllowed() const { return m_doNetSync; }
+	bool                   IsNetSpawnSynced() const { return m_doNetSpawnSync && GetTypeDesc().GetOperators().netSerialize != nullptr; };
+	int32                  GetNetPolicy() const { return m_netPolicy; };
+
+	void*                  GetOffsetPointer(void *pBasePointer) const { return static_cast<uint8*>(pBasePointer) + m_offset; };
+	const void*            GetOffsetPointer(const void *pBasePointer) const { return static_cast<const uint8*>(pBasePointer) + m_offset; };
+
 private:
 
 	const CCommonTypeDesc&  m_typeDesc;
@@ -331,6 +349,10 @@ private:
 	const char*             m_szDescription = nullptr;
 	const char*             m_szIcon = nullptr;
 	Utils::IDefaultValuePtr m_pDefaultValue;
+
+	bool                    m_doNetSync = false;
+	bool                    m_doNetSpawnSync = false;
+	uint32                  m_netPolicy = 0;
 
 	//! Override serializer, if this member want to use a different serializer then the default one in the m_typeDesc.operators.serialize
 	STypeOperators::Serialize m_serialize = nullptr;
@@ -362,6 +384,8 @@ protected:
 
 	bool              AddBase(const CCommonTypeDesc& typeDesc, ptrdiff_t offset);
 	CClassMemberDesc& AddMember(const CCommonTypeDesc& typeDesc, ptrdiff_t offset, uint32 id, const char* szName, const char* szLabel, const char* szDescription, Utils::IDefaultValuePtr&& pDefaultValue);
+	void              ClearBases()   { m_bases.clear(); }
+	void              ClearMembers() { m_members.clear(); }
 
 private:
 
@@ -412,6 +436,7 @@ protected:
 		CCommonTypeDesc::m_operators.copyAssign = Adapters::SCopyAssign<TYPE>::Select();
 		CCommonTypeDesc::m_operators.equals = Adapters::SEquals<TYPE>::Select();
 		CCommonTypeDesc::m_operators.serialize = Adapters::SSerialize<TYPE>::Select();
+		CCommonTypeDesc::m_operators.netSerialize = Adapters::SNetSerialize<TYPE>::Select();
 	}
 
 private:
@@ -554,7 +579,7 @@ public:
 	{
 		SCHEMATYC_VERIFY_TYPE_IS_REFLECTED(BASE_TYPE);
 
-		return CClassDesc::AddBase(GetTypeDesc<BASE_TYPE>(), GetBaseOffset<TYPE, BASE_TYPE>());
+		return CClassDesc::AddBase(GetTypeDesc<BASE_TYPE>(), Cry::Memory::GetBaseOffset<TYPE, BASE_TYPE>());
 	}
 
 	template<typename MEMBER_TYPE, typename MEMBER_DEFAULT_VALUE_TYPE, typename MEMBER_TYPE_PARENT = TYPE>
@@ -564,7 +589,7 @@ public:
 		static_assert(HasOperator::SEquals<MEMBER_TYPE>::value, "Type must be provide equality compare operator");
 		static_assert(std::is_base_of<MEMBER_TYPE_PARENT, TYPE>::value, "Member must implement or equal the described type");
 
-		return CClassDesc::AddMember(GetTypeDesc<MEMBER_TYPE>(), GetMemberOffset(pMember), id, szName, szLabel, szDescription, stl::make_unique<Utils::CDefaultValue<MEMBER_TYPE>>(MEMBER_TYPE(defaultValue)));
+		return CClassDesc::AddMember(GetTypeDesc<MEMBER_TYPE>(), Cry::Memory::GetMemberOffset(pMember), id, szName, szLabel, szDescription, stl::make_unique<Utils::CDefaultValue<MEMBER_TYPE>>(MEMBER_TYPE(defaultValue)));
 	}
 
 protected:

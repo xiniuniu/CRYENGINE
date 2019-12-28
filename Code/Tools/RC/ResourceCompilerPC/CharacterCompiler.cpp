@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 //
 //  Crytek Engine Source File.
 //  Copyright (C), Crytek Studios, 2002.
@@ -33,7 +33,7 @@
 #include "FileUtil.h"
 #include "UpToDateFileHelpers.h"
 #include <CryAnimation/IAttachment.h>
-#include "CGF\CGFNodeMerger.h"
+#include "CGF/CGFNodeMerger.h"
 #include "RcFile.h"
 #include "../CryEngine/CryAnimation/AttachmentVClothPreProcess.h"
 
@@ -59,7 +59,7 @@ string CharacterCompiler::GetOutputFileNameOnly() const
 {
 	string sourceFileFinal = m_CC.config->GetAsString("overwritefilename", m_CC.sourceFileNameOnly.c_str(), m_CC.sourceFileNameOnly.c_str());
 	if (StringHelpers::EndsWith(sourceFileFinal, GetExt(eFileType_cdf)))
-		sourceFileFinal = PathHelpers::ReplaceExtension(sourceFileFinal, "skin");
+		sourceFileFinal = PathUtil::ReplaceExtension(sourceFileFinal, "skin");
 	if (m_CC.config->GetAsBool("StripNonMesh", false, true))
 	{
 		sourceFileFinal += "m";
@@ -71,7 +71,7 @@ string CharacterCompiler::GetOutputFileNameOnly() const
 ////////////////////////////////////////////////////////////
 string CharacterCompiler::GetOutputPath() const
 {
-	return PathHelpers::Join(m_CC.GetOutputFolder(), GetOutputFileNameOnly());
+	return PathUtil::Make(m_CC.GetOutputFolder(), GetOutputFileNameOnly());
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -210,13 +210,13 @@ void CharacterCompiler::ProcessVCloth(
 
 	// get preprocess data
 
-	std::vector<AttachmentVClothPreProcessLra> const& preLra = pre.GetLra();
-	for (int i = 0; i < preLra.size(); i++)
+	std::vector<AttachmentVClothPreProcessNndc> const& preNndc = pre.GetNndc();
+	for (int i = 0; i < preNndc.size(); i++)
 	{
 		SVClothVertex vertex;
-		vertex.attributes.lraIdx = preLra[i].lraIdx;
-		vertex.attributes.lraNextParent = preLra[i].lraNextParent;
-		vertex.attributes.lraDist = preLra[i].lraDist;
+		vertex.attributes.nndcIdx = preNndc[i].nndcIdx;
+		vertex.attributes.nndcNextParent = preNndc[i].nndcNextParent;
+		vertex.attributes.nndcDist = preNndc[i].nndcDist;
 
 		pVClothInfo->m_vertices.push_back(vertex);
 	}
@@ -247,13 +247,13 @@ void CharacterCompiler::ProcessVCloth(
 		pVClothInfo->m_trianglePairs.push_back(btp);
 	}
 
-	std::vector<int> const& preLraNotAttachedOrderedIdx = pre.GetLraNotAttachedOrderedIdx();
-	for (int i = 0; i < preLraNotAttachedOrderedIdx.size(); i++)
+	std::vector<int> const& preNndcNotAttachedOrderedIdx = pre.GetNndcNotAttachedOrderedIdx();
+	for (int i = 0; i < preNndcNotAttachedOrderedIdx.size(); i++)
 	{
-		SVClothLraNotAttachedOrderedIdx lra;
-		lra.lraNotAttachedOrderedIdx = preLraNotAttachedOrderedIdx[i];
+		SVClothNndcNotAttachedOrderedIdx nndc;
+		nndc.nndcNotAttachedOrderedIdx = preNndcNotAttachedOrderedIdx[i];
 
-		pVClothInfo->m_lraNotAttachedOrderedIdx.push_back(lra);
+		pVClothInfo->m_nndcNotAttachedOrderedIdx.push_back(nndc);
 	}
 
 	for (int e = 0; e < eVClothLink_COUNT; e++)
@@ -289,7 +289,7 @@ bool CharacterCompiler::ProcessInternal(CLoaderCGF* cgfLoader, CContentCGF* pCGF
 	bool bStorePositionsAsF16;
 	{
 		const char* const optionName = "vertexPositionFormat";
-		const string s = m_CC.config->GetAsString(optionName, "f32", "f32");
+		const string s = m_CC.config->GetAsString(optionName, "exporter", "f32");
 
 		if (StringHelpers::EqualsIgnoreCase(s, "f32"))
 		{
@@ -574,15 +574,15 @@ bool CharacterCompiler::ProcessInternal(CLoaderCGF* cgfLoader, CContentCGF* pCGF
 
 	if (pCContentCGF)
 	{
-		pCContentCGF->GetExportInfo()->rc_version[0] = fv.v[0];
-		pCContentCGF->GetExportInfo()->rc_version[1] = fv.v[1];
-		pCContentCGF->GetExportInfo()->rc_version[2] = fv.v[2];
-		pCContentCGF->GetExportInfo()->rc_version[3] = fv.v[3];
+		pCContentCGF->GetExportInfo()->rc_version[0] = fv[0];
+		pCContentCGF->GetExportInfo()->rc_version[1] = fv[1];
+		pCContentCGF->GetExportInfo()->rc_version[2] = fv[2];
+		pCContentCGF->GetExportInfo()->rc_version[3] = fv[3];
 
 		StringHelpers::SafeCopyPadZeros(
 			pCContentCGF->GetExportInfo()->rc_version_string,
 			sizeof(pCContentCGF->GetExportInfo()->rc_version_string),
-			StringHelpers::Format(" RCVer:%d.%d ", fv.v[2], fv.v[1]).c_str());
+			StringHelpers::Format(" RCVer:%d.%d ", fv[2], fv[1]).c_str());
 
 		cgfSaver.SetContent(pCContentCGF);
 	}
@@ -922,7 +922,7 @@ bool CharacterCompiler::LoadCDFAssets(const char * sourceFile, const char * fina
 			string newext;
 			newext.Format("_lod%d.skin", item->first);
 			PathUtil::RemoveExtension(fullpath);
-			newlodpath.Format("%s%s", fullpath, newext);
+			newlodpath.Format("%s%s", fullpath.c_str(), newext.c_str());
 		}
 
 		pContent = MakeMergedCGF(newlodpath.c_str(), pMaterial, item->second, config, item->first != 0, basematerial);
@@ -997,13 +997,6 @@ CharacterCompiler::ECdfLoadResult CharacterCompiler::FindAllAttachmentModels(con
 
 		XmlNodeRef attachmentNode = attachmentList->getChild(idx);
 		if (!attachmentNode)
-			continue;
-
-		int flags = 0;
-		if (!attachmentNode->getAttr("Flags", flags))
-			continue;
-
-		if (!(flags & FLAGS_ATTACH_COMBINEATTACHMENT))
 			continue;
 
 		//once we know were an attachment if anything else fails bail from the function and the job
@@ -1216,7 +1209,7 @@ CNodeCGF * CharacterCompiler::SetupNewMergeContents(CContentCGF * pCGF, CMateria
 	if (!pMaterial)
 	{
 		pMaterial = new CMaterialCGF();
-		cry_strcpy(pMaterial->name, PathUtil::GetFileName(pCGF->GetFilename()));
+		cry_strcpy(pMaterial->name, PathUtil::GetFile(pCGF->GetFilename()));
 	}
 	pNode->pMaterial = pMaterial;
 
@@ -1810,7 +1803,7 @@ XmlNodeRef CharacterCompiler::CreateTextureSetupFile(const char * filename, XmlN
 	}
 
 	string partname;
-	partname.Format("%s%s", relativePath.c_str(), PathUtil::GetFileName(filename));
+	partname.Format("%s%s", relativePath.c_str(), PathUtil::GetFile(filename));
 	string diffuse(partname);
 	string specular(partname);
 	string bumpmap(partname);
@@ -1921,7 +1914,7 @@ void CharacterCompiler::SaveTextureMergeSetup(const char * filename, XmlNodeRef 
 	}
 
 	string partname;
-	partname.Format("%s%s", relativePath.c_str(), PathUtil::GetFileName(filename));
+	partname.Format("%s%s", relativePath.c_str(), PathUtil::GetFile(filename));
 	string setupfile = partname.append("_setup.tmxs");
 	texMergeSetup->saveToFile(setupfile.c_str());
 

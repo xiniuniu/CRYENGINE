@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -15,6 +15,7 @@
 #include "VKCommandScheduler.hpp"
 
 #include "VKOcclusionQueryManager.hpp"
+#include <CryThreading/CryThread.h>
 
 namespace NCryVulkan
 {
@@ -27,7 +28,26 @@ namespace NCryVulkan
 class CInstance;
 struct SPhysicalDeviceInfo;
 
-class CDevice : public CRefCounted
+class CDeviceHolder
+{
+protected:
+	VkAllocationCallbacks m_Allocator;
+	VkDevice m_device;
+
+public:
+
+	CDeviceHolder(VkDevice device, VkAllocationCallbacks* hostAllocator) : m_Allocator(*hostAllocator), m_device(device) {}
+
+	~CDeviceHolder()
+	{
+		if (m_device != VK_NULL_HANDLE)
+		{
+			vkDestroyDevice(m_device, &m_Allocator);
+		}
+	}
+};
+
+class CDevice : public CDeviceHolder, public CRefCounted
 {
 
 protected:
@@ -38,9 +58,9 @@ protected:
 	};
 
 public:
-	static _smart_ptr<CDevice> Create(const SPhysicalDeviceInfo* pDeviceInfo, VkAllocationCallbacks* hostAllocator, VkSurfaceKHR Surface, const std::vector<const char*>& layersToEnable, const std::vector<const char*>& extensionsToEnable);
+	static _smart_ptr<CDevice> Create(const SPhysicalDeviceInfo* pDeviceInfo, VkAllocationCallbacks* hostAllocator, const std::vector<const char*>& layersToEnable, const std::vector<const char*>& extensionsToEnable);
 
-	CDevice(const SPhysicalDeviceInfo* pDeviceInfo, VkAllocationCallbacks* hostAllocator, VkDevice Device, VkSurfaceKHR Surface);
+	CDevice(const SPhysicalDeviceInfo* pDeviceInfo, VkAllocationCallbacks* hostAllocator, VkDevice Device);
 	~CDevice();
 
 	CCommandScheduler& GetScheduler() { return m_Scheduler; }
@@ -50,7 +70,6 @@ public:
 	const VkPipelineCache& GetVkPipelineCache() const { return m_pipelineCache; }
 
 	const SPhysicalDeviceInfo* GetPhysicalDeviceInfo() const { return m_pDeviceInfo; }
-	VkSurfaceKHR GetSurface() const { return m_surface; }
 
 	VkDescriptorPool GetDescriptorPool() const { return m_descriptorPool; }
 	CHeap& GetHeap() { return m_heap; }
@@ -76,6 +95,7 @@ public:
 	void DeferDestruction(CBufferView&& view);
 	void DeferDestruction(CImageView&& view);
 	void DeferDestruction(VkRenderPass renderPass, VkFramebuffer frameBuffer);
+	void DeferDestruction(VkPipeline pipeline);
 
 	// Ticks the deferred destruction for the above types.
 	// After kDeferTicks the deferred objects will be actually destroyed.
@@ -93,11 +113,11 @@ public:
 	void FlushReleaseHeaps(const UINT64 (&completedFenceValues)[CMDQUEUE_NUM], const UINT64 (&pruneFenceValues)[CMDQUEUE_NUM]) threadsafe;
 	void FlushAndWaitForGPU();
 
+	bool IsTessellationShaderSupported() const;
+	bool IsGeometryShaderSupported()     const;
+
 private:
 	const SPhysicalDeviceInfo* m_pDeviceInfo;
-	VkAllocationCallbacks m_Allocator;
-	VkSurfaceKHR m_surface;
-	VkDevice m_device;
 	VkPipelineCache m_pipelineCache;
 	VkDescriptorPool m_descriptorPool;
 	CHeap m_heap;
@@ -108,7 +128,24 @@ private:
 		CAutoHandle<VkRenderPass>  renderPass;
 		CAutoHandle<VkFramebuffer> frameBuffer;
 		SRenderPass(SRenderPass&&) = default;
+		SRenderPass(const VkDevice self_, const VkRenderPass renderPass_, const VkFramebuffer frameBuffer_)
+			: self(self_)
+			, renderPass(renderPass_)
+			, frameBuffer(frameBuffer_)
+		{}
 		~SRenderPass();
+	};
+
+	struct SPipeline
+	{
+		VkDevice self;
+		CAutoHandle<VkPipeline> pipeline;
+		SPipeline(SPipeline&&) = default;
+		SPipeline(const VkDevice self_, const VkPipeline pipeline_)
+			: self(self_)
+			, pipeline(pipeline_)
+		{}
+		~SPipeline();
 	};
 
 	static const uint32_t        kDeferTicks = 2; // One for "currently recording", one for "currently executing on GPU", may need to be adjusted?
@@ -117,10 +154,11 @@ private:
 	std::vector<CImageView>      m_deferredImageViews[kDeferTicks];
 	std::vector<CSampler>        m_deferredSamplers[kDeferTicks];
 	std::vector<SRenderPass>     m_deferredRenderPasses[kDeferTicks];
+	std::vector<SPipeline>       m_deferredPipelines[kDeferTicks];
 
 	// Objects that should be released when they are not in use anymore
-	static CryCriticalSectionNonRecursive m_ReleaseHeapTheadSafeScope[2];
-	static CryCriticalSectionNonRecursive m_RecycleHeapTheadSafeScope[2];
+	static CryCriticalSectionNonRecursive m_ReleaseHeapTheadSafeScope[3];
+	static CryCriticalSectionNonRecursive m_RecycleHeapTheadSafeScope[3];
 
 	template<class CResource> CryCriticalSectionNonRecursive& GetReleaseHeapCriticalSection();
 	template<class CResource> CryCriticalSectionNonRecursive& GetRecycleHeapCriticalSection();
@@ -140,12 +178,16 @@ private:
 	};
 
 	template<class CResource> using TReleaseHeap = std::unordered_map<CResource*, ReleaseInfo>;
-	template<class CResource> using TRecycleHeap = std::unordered_multimap<THash, RecycleInfo<CResource>>;
+	template<class CResource> using TRecycleHeap = std::unordered_map<THash, std::deque<RecycleInfo<CResource>>>;
 
 	TReleaseHeap<CBufferResource> m_BufferReleaseHeap;
-	TReleaseHeap<CImageResource > m_ImageReleaseHeap;
 	TRecycleHeap<CBufferResource> m_BufferRecycleHeap;
-	TRecycleHeap<CImageResource > m_ImageRecycleHeap;
+
+	TReleaseHeap<CDynamicOffsetBufferResource> m_DynamicOffsetBufferReleaseHeap;
+	TRecycleHeap<CDynamicOffsetBufferResource> m_DynamicOffsetBufferRecycleHeap;
+
+	TReleaseHeap<CImageResource> m_ImageReleaseHeap;
+	TRecycleHeap<CImageResource> m_ImageRecycleHeap;
 
 	template<class CResource> TReleaseHeap<CResource>& GetReleaseHeap();
 	template<class CResource> TRecycleHeap<CResource>& GetRecycleHeap();

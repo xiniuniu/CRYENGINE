@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "Common.cfi"
 #include "HumanSkinValidations.cfi"
@@ -30,6 +29,9 @@ struct CustomForwardShadingAttribs
 };
 
 #include "ShadeLib.cfi"
+
+//////////////////////////////// Common vertex shader ////////////////
+
 #include "VertexLib.cfi"
 
 //////////////////////////////// Samplers ////////////////
@@ -38,10 +40,9 @@ SUBSURFACEMAP
 DECALMAP
 OPACITYMAP
 ENVIRONMENTCUBEMAP
-DISSOLVE_NOISE_MAP
 
-Texture2D customTex          : register(t9)  = TM_Custom;
-Texture2D customSecondaryTex : register(t10) = TM_CustomSecondary; 
+CUSTOMMAP;
+CUSTOMSECONDARYMAP; 
 
 /// Tweakables //////////////////////
 
@@ -195,17 +196,10 @@ half ComputeWrinkleBlendingWeight(float2 maskCoord)
 	half4 mask0, mask1, mask2;
 	DecodeBlendMask(customSecondaryTex, maskCoord, mask0, mask1, mask2);
 	
-#if %_RT_PER_INSTANCE_CB_TEMP
 	half weight =
-		dot(mask0, PerInstanceWrinklesMask0) + 
-		dot(mask1, PerInstanceWrinklesMask1) + 
-		dot(mask2, PerInstanceWrinklesMask2);
-#else
-	half weight =
-		dot(mask0, PI_WrinklesMask0) + 
-		dot(mask1, PI_WrinklesMask1) + 
-		dot(mask2, PI_WrinklesMask2);
-#endif
+		dot(mask0, CD_WrinklesMask0) + 
+		dot(mask1, CD_WrinklesMask1) + 
+		dot(mask2, CD_WrinklesMask2);
 
 	weight *= WrinklesBlend;
 
@@ -312,14 +306,21 @@ void Callback_ShadingDirect(in ForwardShadingAttribs attribs, in ForwardLightPar
 	float3 viewVec = normalize(-attribs.worldPos);
 	float NdotL = saturate(dot(attribs.normal, light.lightVec));
 
-	diffuseAcc.x = DiffuseBRDF(attribs.normal, viewVec, light.lightVec, attribs.smoothness, NdotL);
-	specularAcc = SpecularBRDF(attribs.normal, viewVec, light.lightVec, attribs.smoothness, attribs.reflectance) * NdotL;
+    if (light.type == LIGHT_TYPE_REGULAR_AREA)
+    {
+        AreaLightLTC_GGX(attribs.normal, -normalize(attribs.areaAttribs.position), attribs.smoothness, attribs.reflectance, attribs.areaAttribs.position,
+		                 attribs.areaAttribs.lightPos, attribs.areaAttribs.lightArrayIdx, attribs.areaAttribs.transform, Fwd_SpotTexArray, diffuseAcc, specularAcc);
+    }
+    else
+    {
+        diffuseAcc.x = DiffuseBRDF(attribs.normal, viewVec, light.lightVec, attribs.smoothness, NdotL);
+        specularAcc  = SpecularBRDF(attribs.normal, viewVec, light.lightVec, attribs.smoothness, attribs.reflectance) * NdotL;
+    }
 	
 	diffuseAcc = diffuseAcc.x * light.illuminance;
 	specularAcc = specularAcc * light.illuminance;
 }
 
-#include "TiledShading.cfi"
 #include "ForwardShading.cfi"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -353,9 +354,7 @@ technique General
 <
   string Script = 
         "TechniqueZ=ZPass;"
-#if !ENABLE_TESSELLATION
-				"TechniqueZPrepass=ZPrepass;"
-#endif
+        "TechniqueZPrepass=ZPrePass;"
         "TechniqueMotionBlur=MotionBlurPass;" 
         "TechniqueCustomRender=CustomRenderPass;"
         "TechniqueShadowGen=ShadowGen;"
@@ -452,15 +451,8 @@ pixout_gbuffer SkinZPassPS(vert2fragZ_C IN)
 	clip(fDiffuseAlpha - IN.baseTC.w);
 #endif
 
-#if %_RT_DISSOLVE
-	half2 noiseTC = IN.WPos.xy/(100.0f*PS_HPosScale.xy);
+	ApplyDissolve(IN.baseTC.z, (int2)IN.WPos.xy, 33);
 
-	half fNoise = GetDissolveTex(dissolveNoiseTex, noiseTC).g;
-
-	clip((fNoise-IN.baseTC.z));
-#endif
-	
-	
 	////////////////////////////////////////////////////////////////////////////////////////////////
   // Gather material attributes
 	

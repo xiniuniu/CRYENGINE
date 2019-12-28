@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -10,6 +10,8 @@
 class CVolumetricFogStage : public CGraphicsPipelineStage
 {
 public:
+	static const EGraphicsPipelineStage StageID = eStage_VolumetricFog;
+
 	struct SForwardParams
 	{
 		Vec4 vfSamplingParams;
@@ -29,16 +31,46 @@ public:
 	static const int32 ShadowCascadeNum = 3;
 
 	static bool  IsEnabledInFrame();
-	static int32 GetVolumeTextureDepthSize();
-	static int32 GetVolumeTextureSize(int32 size, int32 scale);
-	static float GetDepthTexcoordFromLinearDepthScaled(float linearDepthScaled, float raymarchStart, float invRaymarchDistance, float depthSlicesNum);
+
+	static inline int32 GetVolumeTextureDepthSize(int32 size)
+	{
+		int32 d = size;
+		d = (d < 4) ? 4 : d;
+		d = (d > 255) ? 255 : d; // this limitation due to the limitation of CTexture::CreateTextureArray.
+		int32 f = d % 4;
+		d = (f > 0) ? d - f : d; // depth should be the multiples of 4.
+		return d;
+	}
+
+	static inline int32 GetVolumeTextureSize(int32 size, int32 scale)
+	{
+		scale = max(scale, 2);
+		return (size / scale) + ((size % scale) > 0 ? 1 : 0);
+	}
+
+	static inline float GetDepthTexcoordFromLinearDepthScaled(float linearDepthScaled, float raymarchStart, float invRaymarchDistance, float depthSlicesNum)
+	{
+		linearDepthScaled = max(0.0f, linearDepthScaled - raymarchStart);
+		float d = powf((linearDepthScaled * invRaymarchDistance), (1.0f / 2.0f));
+		d = (0.5f - d) / depthSlicesNum + d;
+		return d;
+	}
 
 public:
-	CVolumetricFogStage();
+	CVolumetricFogStage(CGraphicsPipeline& graphicsPipeline);
 	virtual ~CVolumetricFogStage();
 
-	void Init() override;
-	void Prepare(CRenderView* pRenderView) override;
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return gRenDev->m_bVolumetricFogEnabled && RenderView()->IsGlobalFogEnabled();
+	}
+
+	void Init() final;
+	void Resize(int renderWidth, int renderHeight) final;
+	void OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater) final;
+	void Update() final;
+	bool UpdatePerPassResourceSet() final;
+	bool UpdateRenderPasses() final;
 
 	void Execute();
 
@@ -59,10 +91,12 @@ private:
 	static const int32 MaxFrameNum = 4;
 
 private:
-	bool      PreparePerPassResources(CRenderView* RESTRICT_POINTER pRenderView, bool bOnInit);
+	void      Rescale(int resolutionScale, int depthScale);
+	void      ResizeResource(int volumeWidth, int volumeHeight, int volumeDepth);
+	bool      PreparePerPassResources(bool bOnInit);
 
-	void      InjectParticipatingMedia(CRenderView* pRenderView, const SScopedComputeCommandList& commandList);
-	void      RenderVolumetricFog(CRenderView* pRenderView, const SScopedComputeCommandList& commandList);
+	void      ExecuteInjectParticipatingMedia(const SScopedComputeCommandList& commandList);
+	void      ExecuteVolumetricFog(const SScopedComputeCommandList& commandList);
 
 	uint32    GetTemporalBufferId() const;
 	CTexture* GetInscatterTex() const;
@@ -70,21 +104,22 @@ private:
 	CTexture* GetDensityTex() const;
 	CTexture* GetPrevDensityTex() const;
 
-	bool      IsVisible() const;
+	void      GenerateLightList();
+	void      GenerateFogVolumeList();
+
+	bool      ReplaceShadowMapWithStaticShadowMap(CShadowUtils::SShadowCascades& shadowCascades, uint32 shadowCascadeSlot) const;
+
 	bool      IsTexturesValid() const;
 	void      UpdateFrame();
-	void      RenderDownscaledShadowmap(CRenderView* pRenderView);
-	void      PrepareLightList(CRenderView* pRenderView);
-	void      BuildLightListGrid(const SScopedComputeCommandList& commandList);
-	void      RenderDownscaledDepth(const SScopedComputeCommandList& commandList);
-	void      PrepareFogVolumeList(CRenderView* pRenderView);
-	void      InjectFogDensity(const SScopedComputeCommandList& commandList);
-	bool      ReplaceShadowMapWithStaticShadowMap(CShadowUtils::SShadowCascades& shadowCascades, uint32 shadowCascadeSlot, CRenderView* pRenderView) const;
-	void      InjectInscatteringLight(CRenderView* pRenderView, const SScopedComputeCommandList& commandList);
-	void      BlurDensityVolume(const SScopedComputeCommandList& commandList);
-	void      BlurInscatterVolume(const SScopedComputeCommandList& commandList);
-	void      TemporalReprojection(const SScopedComputeCommandList& commandList);
-	void      RaymarchVolumetricFog(const SScopedComputeCommandList& commandList);
+	void      ExecuteDownscaleShadowmap();
+	void      ExecuteBuildLightListGrid(const SScopedComputeCommandList& commandList);
+	void      ExecuteDownscaledDepth(const SScopedComputeCommandList& commandList);
+	void      ExecuteInjectFogDensity(const SScopedComputeCommandList& commandList);
+	void      ExecuteInjectInscatteringLight(const SScopedComputeCommandList& commandList);
+	void      ExecuteBlurDensityVolume(const SScopedComputeCommandList& commandList);
+	void      ExecuteBlurInscatterVolume(const SScopedComputeCommandList& commandList);
+	void      ExecuteTemporalReprojection(const SScopedComputeCommandList& commandList);
+	void      ExecuteRaymarchVolumetricFog(const SScopedComputeCommandList& commandList);
 
 private:
 	_smart_ptr<CTexture>     m_pVolFogBufDensityColor;
@@ -134,9 +169,10 @@ private:
 
 	Matrix44A                m_viewProj[MaxFrameNum];
 	int32                    m_cleared;
-	uint32                   m_numTileLights;
-	uint32                   m_numFogVolumes;
-	int32                    m_frameID;
-	int32                    m_tick;
-	int32                    m_resourceFrameID;
+	uint32                   m_numTileLights = 0;
+	uint32                   m_numFogVolumes = 0;
+	int64                    m_frameID = -1;
+	int32                    m_tick = 0;
+
+	bool                     m_seperateDensity = false;
 };

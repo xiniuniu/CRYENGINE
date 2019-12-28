@@ -1,16 +1,18 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
+
+#ifndef RELEASE
 #include "EntityComponentsCache.h"
 #include "Entity.h"
 
 //////////////////////////////////////////////////////////////////////////
-void CEntitiesComponentPropertyCache::StoreEntities()
+void CEntityComponentsCache::StoreEntities()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
 
-	IEntityItPtr it = GetISystem()->GetIEntitySystem()->GetEntityIterator();
-	while (IEntity* pEntity = it->Next())
+	IEntityItPtr it = g_pIEntitySystem->GetEntityIterator();
+	while (CEntity* pEntity = static_cast<CEntity*>(it->Next()))
 	{
 		if (!pEntity->IsGarbage())
 		{
@@ -20,24 +22,50 @@ void CEntitiesComponentPropertyCache::StoreEntities()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntitiesComponentPropertyCache::RestoreEntities()
+void CEntityComponentsCache::RestoreEntities()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
 
-	IEntityItPtr it = GetISystem()->GetIEntitySystem()->GetEntityIterator();
-	while (IEntity* pEntity = it->Next())
+	RemoveEntitiesSpawnedDuringGameMode();
+
+	IEntityItPtr it = g_pIEntitySystem->GetEntityIterator();
+	while (CEntity* pEntity = static_cast<CEntity*>(it->Next()))
 	{
 		if (!pEntity->IsGarbage())
 		{
 			LoadEntity(*static_cast<CEntity*>(pEntity));
 		}
 	}
+
+	m_componentPropertyCache.clear();
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntitiesComponentPropertyCache::StoreComponent(CEntity& entity, IEntityComponent& component)
+void CEntityComponentsCache::RemoveEntitiesSpawnedDuringGameMode()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
+	for (const EntityId entityId : m_entitiesSpawnedDuringEditorGameMode)
+	{
+		if (CEntity* pEntity = g_pIEntitySystem->GetEntityFromID(entityId))
+		{
+			CEntity* pParent = static_cast<CEntity*>(pEntity->GetParent());
+
+			// Childs of irremovable entity are not deleted (Needed for vehicles weapons for example)
+			if (pParent != nullptr && pParent->GetFlags() & ENTITY_FLAG_UNREMOVABLE)
+			{
+				continue;
+			}
+
+			g_pIEntitySystem->RemoveEntity(entityId, true);
+		}
+	}
+
+	m_entitiesSpawnedDuringEditorGameMode.clear();
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntityComponentsCache::StoreComponent(CEntity& entity, IEntityComponent& component)
+{
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
 
 	// Only Schematyc editable and user added components are eligible for storing
 	if (!component.GetComponentFlags().Check(EEntityComponentFlags::SchematycEditable) &&
@@ -54,9 +82,9 @@ void CEntitiesComponentPropertyCache::StoreComponent(CEntity& entity, IEntityCom
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntitiesComponentPropertyCache::LoadComponent(CEntity& entity, IEntityComponent& component)
+void CEntityComponentsCache::LoadComponent(CEntity& entity, IEntityComponent& component)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
 
 	// Only Schematyc editable and user added components are eligible for storing
 	if (!component.GetComponentFlags().Check(EEntityComponentFlags::SchematycEditable) &&
@@ -65,7 +93,7 @@ void CEntitiesComponentPropertyCache::LoadComponent(CEntity& entity, IEntityComp
 		return;
 	}
 
-	auto iter = m_componentPropertyCache.find( { entity.GetGuid(), component.GetGUID() } );
+	auto iter = m_componentPropertyCache.find({ entity.GetGuid(), component.GetGUID() });
 	if (iter != m_componentPropertyCache.end())
 	{
 		auto& pClassProperties = iter->second;
@@ -81,33 +109,30 @@ void CEntitiesComponentPropertyCache::LoadComponent(CEntity& entity, IEntityComp
 	}
 }
 
-void CEntitiesComponentPropertyCache::StoreEntity(CEntity& entity)
+void CEntityComponentsCache::StoreEntity(CEntity& entity)
 {
-	entity.GetComponentsVector().ForEach(
-	  [&](const SEntityComponentRecord& rec)
+	entity.GetComponentsVector().ForEach([this, &entity](const SEntityComponentRecord& rec) -> EComponentIterationResult
 	{
 		if (!rec.pComponent->GetClassDesc().GetName().IsEmpty())
 		{
 			StoreComponent(entity, *rec.pComponent.get());
 		}
+
+		return EComponentIterationResult::Continue;
 	});
 }
 
-void CEntitiesComponentPropertyCache::LoadEntity(CEntity& entity)
+void CEntityComponentsCache::LoadEntity(CEntity& entity)
 {
-	entity.GetComponentsVector().ForEach(
-	  [&](const SEntityComponentRecord& rec)
+	entity.GetComponentsVector().ForEach([this, &entity](const SEntityComponentRecord& rec) -> EComponentIterationResult
 	{
 		if (!rec.pComponent->GetClassDesc().GetName().IsEmpty())
 		{
 			LoadComponent(entity, *rec.pComponent.get());
 		}
+
+		return EComponentIterationResult::Continue;
 	});
 }
 
-//////////////////////////////////////////////////////////////////////////
-void CEntitiesComponentPropertyCache::ClearCache()
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
-	m_componentPropertyCache.clear();
-}
+#endif

@@ -1,8 +1,8 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
-#include "../EditorCommon/QPropertyTree/ContextList.h"
+#include "QPropertyTreeLegacy/ContextList.h"
 #include "AnimationList.h"
 #include "AnimationTagList.h"
 #include "CharacterDocument.h"
@@ -27,7 +27,7 @@
 #include "SourceAssetContent.h"
 #include "AnimationCompressionManager.h"
 #include "CharacterGizmoManager.h"
-#include "../EditorCommon/Serialization/Decorators/INavigationProvider.h"
+#include "Serialization/Decorators/INavigationProvider.h"
 
 namespace CharacterTool
 {
@@ -36,7 +36,6 @@ System::System()
 	: loaded(false)
 	, dbaTable(0)
 	, compressionPresetTable(0)
-	, compressionSkeletonList(0)
 {
 }
 
@@ -64,7 +63,7 @@ void System::Initialize()
 	characterList->AddEntryType<CharacterContent>()
 	.AddFormat("cga", new CGALoader(), FORMAT_LIST | FORMAT_LOAD)
 	;
-	characterList->SetDataIcon("icons:Animation/Character.ico");
+	characterList->SetDataIcon("icons:common/animation_character.ico");
 
 	explorerData->AddProvider(characterList.get(), "Characters");
 
@@ -73,7 +72,7 @@ void System::Initialize()
 	.AddFormat("chrparams", new CHRParamsLoader(), FORMAT_MAIN | FORMAT_LIST | FORMAT_SAVE | FORMAT_LOAD)
 	.AddFormat("chr", 0, FORMAT_LIST)
 	;
-	skeletonList->SetDataIcon("icons:Animation/Skeleton.ico");
+	skeletonList->SetDataIcon("icons:common/animation_skeleton.ico");
 	explorerData->AddProvider(skeletonList.get(), "Skeletons");
 
 #if 0
@@ -82,21 +81,20 @@ void System::Initialize()
 	physicsList->AddEntryType<SCharacterPhysicsContent>()
 	.AddFormat("phys", new SJSONLoader())
 	;
-	physicsList->SetDataIcon("icons:Animation/Physics.ico");
+	physicsList->SetDataIcon("icons:common/animation_physics.ico");
 	explorerData->AddProvider(physicsList.get(), "Physics");
 
 	rigList.reset(new ExplorerFileList());
 	rigList->AddEntryType<SCharacterRigContent>()
 	.AddFormat("rig", new SJSONLoader())
 	;
-	rigList->SetDataIcon("icons:Animation/Rig.ico");
+	rigList->SetDataIcon("icons:common/animation_rig.ico");
 	explorerData->AddProvider(rigList.get(), "Rigs");
 #endif
 
 	compressionGlobalList.reset(new ExplorerFileList());
 	compressionPresetTable = &compressionGlobalList->AddSingleFile<EditorCompressionPresetTable>("Animations/CompressionPresets.json", "Compression Presets", new SelfLoader<EditorCompressionPresetTable>())->content;
 	dbaTable = &compressionGlobalList->AddSingleFile<EditorDBATable>("Animations/DBATable.json", "DBA Table", new SelfLoader<EditorDBATable>())->content;
-	compressionSkeletonList = &compressionGlobalList->AddSingleFile<SkeletonList>("Animations/SkeletonList.xml", "Skeleton List", new SelfLoader<SkeletonList>())->content;
 
 	animationTagList.reset(new AnimationTagList(compressionPresetTable, dbaTable));
 	animationList.reset(new AnimationList(this));
@@ -115,6 +113,8 @@ void System::Initialize()
 	explorerData->AddProvider(sourceAssetList.get(), "Source Assets");
 #endif
 
+	explorerData->Populate();
+
 	gizmoSink.reset(new GizmoSink());
 	characterSpaceProvider.reset(new CharacterSpaceProvider(document.get()));
 
@@ -125,7 +125,6 @@ void System::Initialize()
 	contextList->Update(this);
 	contextList->Update(document.get());
 	contextList->Update(static_cast<ITagSource*>(animationTagList.get()));
-	contextList->Update(compressionSkeletonList);
 	contextList->Update(compressionPresetTable);
 	contextList->Update(dbaTable);
 	contextList->Update(explorerNavigationProvider.get());
@@ -150,7 +149,6 @@ void System::LoadGlobalData()
 	compressionPresetTable->Load();
 	dbaTable->SetFilterAnimationList(filterAnimationList.get());
 	dbaTable->Load();
-	compressionSkeletonList->Load();
 	compressionGlobalList->Populate();
 	if (sourceAssetList)
 		sourceAssetList->Populate();

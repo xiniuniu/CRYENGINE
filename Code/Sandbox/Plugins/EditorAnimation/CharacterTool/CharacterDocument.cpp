@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -6,16 +6,16 @@
 #include <CryExtension/CryCreateClassInstance.h>
 #include "Serialization.h"
 #include <CrySystem/ISystem.h>
-#include <CryGame/IGameFramework.h>
 #include <CryAnimation/ICryAnimation.h>
 #include <IEditor.h>
 #include <CryInput/IInput.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <CryRenderer/IShaderParamCallback.h>
 #include <CryAnimation/IVertexAnimation.h>
 #include <CryPhysics/IPhysicsDebugRenderer.h>
 #include <CryAction/IMaterialEffects.h>
 #include "QViewport.h"
-#include "../EditorCommon/QPropertyTree/ContextList.h"
+#include "QPropertyTreeLegacy/ContextList.h"
 #include <QViewportSettings.h>
 #include <IResourceSelectorHost.h>
 #include "DisplayParameters.h"
@@ -535,7 +535,9 @@ CharacterDocument::CharacterDocument(System* system)
 	, m_compressionMachine(new CompressionMachine())
 	, m_playbackState(PLAYBACK_UNAVAILABLE)
 	, m_playbackTime(0.0f)
-	, m_playbackDuration(1.0f)
+	, m_playbackDuration(1.0f/30.0f)
+	, m_layerIdxMaxPlaybackDurationOfAllEnabledLayers(0)
+	, m_maxPlaybackDurationOfAllEnabledLayers(1.0f/30.0f)
 	, m_bindPoseEnabled(false)
 	, m_displayOptions(new DisplayOptions())
 	, m_updateCameraTarget(false)
@@ -563,7 +565,6 @@ void CharacterDocument::ConnectExternalSignals()
 	EXPECTED(connect(m_system->scene.get(), SIGNAL(SignalLayerActivated()), this, SLOT(OnSceneLayerActivated())));
 	EXPECTED(connect(m_system->scene.get(), SIGNAL(SignalNewLayerActivated()), this, SLOT(OnSceneNewLayerActivated())));
 	EXPECTED(connect(m_system->explorerData.get(), SIGNAL(SignalEntryModified(ExplorerEntryModifyEvent &)), this, SLOT(OnExplorerEntryModified(ExplorerEntryModifyEvent &))));
-	EXPECTED(connect(m_system->explorerData.get(), &ExplorerData::SignalSelectedEntryClicked, this, &CharacterDocument::OnExplorerSelectedEntryClicked));
 	EXPECTED(connect(m_system->explorerData.get(), &ExplorerData::SignalEntrySavedAs, this, &CharacterDocument::OnExplorerEntrySavedAs));
 	EXPECTED(connect(m_system->characterList.get(), SIGNAL(SignalEntryModified(EntryModifiedEvent &)), this, SLOT(OnCharacterModified(EntryModifiedEvent &))));
 	EXPECTED(connect(m_system->characterList.get(), &ExplorerFileList::SignalEntrySavedAs, this, &CharacterDocument::OnCharacterSavedAs));
@@ -585,7 +586,7 @@ void CharacterDocument::OnSceneCharacterChanged()
 	LoadCharacter(m_system->scene->characterPath.c_str());
 }
 
-void CharacterDocument::Physicalize()
+void CharacterDocument::Physicalize(int physLod)
 {
 	IPhysicalWorld* pPhysWorld = gEnv->pPhysicalWorld;
 	if (!pPhysWorld)
@@ -608,7 +609,7 @@ void CharacterDocument::Physicalize()
 	{
 		character->GetISkeletonPose()->DestroyCharacterPhysics();
 		m_pPhysicalEntity = pPhysWorld->CreatePhysicalEntity(PE_LIVING);
-		IPhysicalEntity* pCharPhys = character->GetISkeletonPose()->CreateCharacterPhysics(m_pPhysicalEntity, 80.0f, -1, 70.0f);
+		IPhysicalEntity* pCharPhys = character->GetISkeletonPose()->CreateCharacterPhysics(m_pPhysicalEntity, 80.0f, -1, 70.0f, physLod);
 		character->GetISkeletonPose()->CreateAuxilaryPhysics(pCharPhys, Matrix34(IDENTITY));
 		pe_player_dynamics pd;
 		pd.bActive = 0;
@@ -774,12 +775,12 @@ void CharacterDocument::LoadCharacter(const char* filename)
 
 	if (m_uncompressedCharacter)
 	{
-		m_uncompressedCharacter->SetCharEditMode(m_uncompressedCharacter->GetCharEditMode() | CA_CharacterTool);
+		m_uncompressedCharacter->SetCharEditMode(m_uncompressedCharacter->GetCharEditMode() | CA_CharacterAuxEditor);
 	}
 
 	if (m_compressedCharacter)
 	{
-		m_compressedCharacter->SetCharEditMode(m_compressedCharacter->GetCharEditMode() | CA_CharacterTool);
+		m_compressedCharacter->SetCharEditMode(m_compressedCharacter->GetCharEditMode() | CA_CharacterAuxEditor);
 		m_compressedCharacter->GetISkeletonAnim()->SetEventCallback(AnimationEventCallback, this);
 
 		m_PhysicalLocation.SetIdentity();
@@ -795,8 +796,6 @@ void CharacterDocument::LoadCharacter(const char* filename)
 		m_camRadius = (m_AABB.max - m_AABB.min).GetLength();
 
 		Physicalize();
-
-		IMaterial* pMtl = m_compressedCharacter->GetIMaterial();
 
 		if (!m_groundAlignment)
 		{
@@ -871,14 +870,14 @@ void CharacterDocument::LoadCharacter(const char* filename)
 				}
 			}
 		}
-		m_system->animationList->Populate(m_compressedCharacter, GetDefaultSkeletonAlias().c_str(), filter, m_compressedCharacter->GetModelAnimEventDatabase());
+		m_system->animationList->Populate(m_compressedCharacter, filter, m_compressedCharacter->GetModelAnimEventDatabase());
 
 		if (characterEntry)
 			characterEntry->content.engineLoadState = CharacterContent::CHARACTER_LOADED;
 	}
 	else
 	{
-		m_system->animationList->Populate(0, GetDefaultSkeletonAlias().c_str(), AnimationSetFilter(), "");
+		m_system->animationList->Populate(nullptr, AnimationSetFilter(), "");
 	}
 
 	m_compressionMachine->SetCharacters(m_uncompressedCharacter, m_compressedCharacter);
@@ -945,6 +944,8 @@ void CharacterDocument::OnScenePlaybackLayersChanged(bool continuousChange)
 		TriggerAnimationPreview(PREVIEW_ALLOW_REWIND);
 
 	SetBindPoseEnabled(m_system->scene->layers.bindPose);
+
+	DetermineLayerWithMaxPlaybackDurationOfAllEnabledLayers();
 }
 
 void CharacterDocument::OnSceneLayerActivated()
@@ -952,12 +953,16 @@ void CharacterDocument::OnSceneLayerActivated()
 	ExplorerEntry* activeAnimationEntry = GetActiveAnimationEntry();
 	if (activeAnimationEntry && !IsExplorerEntrySelected(activeAnimationEntry))
 		SetSelectedExplorerEntries(ExplorerEntries(1, activeAnimationEntry), 0);
+
+	DetermineLayerWithMaxPlaybackDurationOfAllEnabledLayers();
 }
 
 void CharacterDocument::OnSceneNewLayerActivated()
 {
 	// gives opportunity to select animation into newly added layer
 	SetSelectedExplorerEntries(ExplorerEntries(), 0);
+
+	DetermineLayerWithMaxPlaybackDurationOfAllEnabledLayers();
 }
 
 void CharacterDocument::Serialize(IArchive& ar)
@@ -994,7 +999,7 @@ void CharacterDocument::OnCharacterModified(EntryModifiedEvent& ev)
 
 	bool skinSetChanged = false;
 	if (m_compressedCharacter.get())
-		entry->content.cdf.ApplyToCharacter(&skinSetChanged, m_compressedCharacter.get(), GetIEditor()->GetSystem()->GetIAnimationSystem(), true);
+		entry->content.cdf.ApplyToCharacter(&skinSetChanged, m_compressedCharacter.get(), GetIEditor()->GetSystem()->GetIAnimationSystem(), true, !!strcmp(ev.reason, "Revert"));
 	if (m_uncompressedCharacter.get())
 		entry->content.cdf.ApplyToCharacter(&skinSetChanged, m_uncompressedCharacter.get(), GetIEditor()->GetSystem()->GetIAnimationSystem(), false);
 
@@ -1018,6 +1023,8 @@ void CharacterDocument::OnCharacterModified(EntryModifiedEvent& ev)
 		if (m_uncompressedCharacter)
 			emptyRig.ApplyToCharacter(m_uncompressedCharacter);
 	}
+
+	Physicalize(entry->content.cdf.m_physLod);
 
 	if (!ev.continuousChange)
 		SignalActiveCharacterChanged();
@@ -1052,6 +1059,11 @@ void CharacterDocument::GetEntriesActiveInDocument(ExplorerEntries* entries) con
 	ExplorerEntry* animationEntry = GetActiveAnimationEntry();
 	if (animationEntry)
 		entries->push_back(animationEntry);
+}
+
+void CharacterDocument::SetAuxRenderer(IRenderAuxGeom* pAuxRenderer)
+{
+	m_pAuxRenderer = pAuxRenderer;
 }
 
 ExplorerEntry* CharacterDocument::GetActivePhysicsEntry() const
@@ -1103,12 +1115,6 @@ void CharacterDocument::OnExplorerEntryModified(ExplorerEntryModifyEvent& ev)
 
 	if (!ev.entry)
 		return;
-
-	if (!ev.continuousChange)
-	{
-		if (m_system->animationList->OwnsAssetEntry(ev.entry))
-			PreviewAnimationEntry(false);
-	}
 
 	ExplorerEntry* activePhysicsEntry = GetActivePhysicsEntry();
 	if (ev.entry == activePhysicsEntry)
@@ -1184,17 +1190,6 @@ void CharacterDocument::OnExplorerEntryModified(ExplorerEntryModifyEvent& ev)
 				}
 			}
 		}
-	}
-}
-
-void CharacterDocument::OnExplorerSelectedEntryClicked(ExplorerEntry* entry)
-{
-	if (!entry)
-		return;
-
-	if (m_system->animationList->OwnsAssetEntry(entry))
-	{
-		TriggerAnimationPreview(PREVIEW_ALLOW_REWIND);
 	}
 }
 
@@ -1409,7 +1404,7 @@ void CharacterDocument::IdleUpdate()
 	if (m_compressedCharacter)
 	{
 		ISkeletonAnim& skeletonAnimation = *m_compressedCharacter->GetISkeletonAnim();
-		int layer = 0;
+		int layer = m_layerIdxMaxPlaybackDurationOfAllEnabledLayers;
 		if (CAnimation* animation = &skeletonAnimation.GetAnimFromFIFO(layer, 0))
 		{
 			if (skeletonAnimation.GetNumAnimsInFIFO(layer) > 0)
@@ -1459,11 +1454,40 @@ void CharacterDocument::IdleUpdate()
 	}
 }
 
-static void DrawAnimationStateText(IRenderer* renderer, const vector<StateText>& lines)
+void CharacterDocument::DetermineLayerWithMaxPlaybackDurationOfAllEnabledLayers()
+{
+	uint32& layerIdxMaxDuration = m_layerIdxMaxPlaybackDurationOfAllEnabledLayers;
+	float& maxDuration = m_maxPlaybackDurationOfAllEnabledLayers;
+
+	maxDuration = 1.0f/30.0f;
+	layerIdxMaxDuration = 0;
+
+	const auto& layers = m_system->scene->layers.layers;
+	const uint32 noOfLayers = layers.size();
+	if (!m_compressedCharacter) return;
+	ISkeletonAnim& skeletonAnimation = *m_compressedCharacter->GetISkeletonAnim();
+
+	for (uint32 l = 0; l < noOfLayers; ++l)
+	{
+		if (layers[l].enabled)
+		{
+			if (CAnimation* animation = &skeletonAnimation.GetAnimFromFIFO(l, 0))
+			{
+				float layerDuration = skeletonAnimation.CalculateCompleteBlendSpaceDuration(*animation);
+				if (layerDuration > maxDuration)
+				{
+					layerIdxMaxDuration = l;
+					maxDuration = layerDuration;
+				}
+			}
+		}
+	}
+}
+
+static void DrawAnimationStateText(IRenderer* renderer, IRenderAuxGeom* pAuxRenderer,  const vector<StateText>& lines)
 {
 	int y = 30;
 
-	bool singleLine = lines.size() == 1;
 	for (size_t i = 0; i < lines.size(); ++i)
 	{
 		const StateText& l = lines[i];
@@ -1474,11 +1498,11 @@ static void DrawAnimationStateText(IRenderer* renderer, const vector<StateText>&
 		bool singleLine = l.animation.empty();
 		if (!singleLine)
 		{
-			IRenderAuxText::Draw2dLabel(20, y, 1.5f, ColorF(color), false, "%s", l.animation.c_str());
+			pAuxRenderer->Draw2dLabel(20, y, 1.5f, ColorF(color), false, "%s", l.animation.c_str());
 			y += 18;
 		}
 
-		IRenderAuxText::Draw2dLabel(singleLine ? 20 : 40, y, singleLine ? 1.5f : 1.2f, ColorF(color), false, "%s", l.text.c_str());
+		pAuxRenderer->Draw2dLabel(singleLine ? 20 : 40, y, singleLine ? 1.5f : 1.2f, ColorF(color), false, "%s", l.text.c_str());
 		y += singleLine ? 18 : 16;
 	}
 }
@@ -1496,8 +1520,6 @@ void CharacterDocument::OnAnimEvent(ICharacterInstance* character)
 	if (!m_bPaused)
 	{
 		ISkeletonAnim& skeletonAnim = *character->GetISkeletonAnim();
-		ISkeletonPose& skeletonPose = *character->GetISkeletonPose();
-		IDefaultSkeleton& defaultSkeleton = character->GetIDefaultSkeleton();
 
 		AnimEventInstance event = skeletonAnim.GetLastAnimEvent();
 		PlayAnimEvent(character, event);
@@ -1667,8 +1689,9 @@ void CharacterDocument::PreRender(const SRenderContext& context)
 		// get relative movement
 		QuatT relMove = skeletonAnim.GetRelMovement();
 
-		// Determine normalizedTime/relativeMovement by actual selected (active) layer
-		const int activeLayerId = m_system->scene->layers.activeLayer;
+		// Determine normalizedTime/relativeMovement by layer with maximum duration
+		const int activeLayerId = m_layerIdxMaxPlaybackDurationOfAllEnabledLayers;
+
 		const uint32 activeLayerAnimationCount = skeletonAnim.GetNumAnimsInFIFO(activeLayerId);
 		if (activeLayerAnimationCount == 1)
 		{
@@ -1802,8 +1825,6 @@ void CharacterDocument::PreRender(const SRenderContext& context)
 
 		context.viewport->SetState(*m_viewportState);
 
-		f32 fDistanceFromOrigin = m_PhysicalLocation.t.GetLength();
-
 		m_LocalEntityMat = Matrix34(m_PhysicalLocation);
 
 		if (m_Callbacks.size() > 0)
@@ -1823,7 +1844,7 @@ void CharacterDocument::PreRender(const SRenderContext& context)
 		if (m_AverageFrameTime > 0)
 		{
 			pe_params_flags pf;
-			pf.flagsOR = pef_update;
+			pf.flagsOR = pef_update | pef_ignore_areas;
 
 			IPhysicalEntity* pCharBasePhys = skeletonPose.GetCharacterPhysics();
 			if (pCharBasePhys)
@@ -1856,6 +1877,13 @@ void CharacterDocument::PreRender(const SRenderContext& context)
 			pVars->iOutOfBounds = 3;
 			gEnv->pPhysicalWorld->TimeStep(m_AverageFrameTime, ent_independent | ent_living | ent_flagged_only);
 			pVars->iOutOfBounds = iOutOfBounds;
+
+			pf.flagsOR = 0;
+			pf.flagsAND = ~pef_update;
+			if (pCharBasePhys)
+				pCharBasePhys->SetParams(&pf);
+			for (int i = 0; skeletonPose.GetCharacterPhysics(i); i++)
+				skeletonPose.GetCharacterPhysics(i)->SetParams(&pf);
 		}
 
 		//	pInstanceBase->SetAttachmentLocation_DEPRECATED( m_PhysicalLocation );
@@ -1893,7 +1921,7 @@ void CharacterDocument::PreRender(const SRenderContext& context)
 
 void CharacterDocument::Render(const SRenderContext& context)
 {
-	FUNCTION_PROFILER(GetIEditor()->GetSystem(), PROFILE_EDITOR);
+	CRY_PROFILE_FUNCTION(PROFILE_EDITOR);
 
 	if (!m_compressedCharacter)
 		return;
@@ -1920,7 +1948,7 @@ void CharacterDocument::Render(const SRenderContext& context)
 	}
 
 	IRenderer* renderer = gEnv->pRenderer;
-	DrawAnimationStateText(renderer, m_compressedStateTextCache);
+	DrawAnimationStateText(renderer, m_pAuxRenderer, m_compressedStateTextCache);
 
 	if (m_system->scene->animEventPlayer)
 		m_system->scene->animEventPlayer->Update(m_compressedCharacter, QuatT(m_PhysicalLocation.q, m_PhysicalLocation.t), context.camera->GetMatrix());
@@ -1933,7 +1961,7 @@ void CharacterDocument::PreRenderOriginal(const SRenderContext& context)
 
 void CharacterDocument::RenderOriginal(const SRenderContext& context)
 {
-	FUNCTION_PROFILER(GetIEditor()->GetSystem(), PROFILE_EDITOR);
+	CRY_PROFILE_FUNCTION(PROFILE_EDITOR);
 
 	if (m_uncompressedCharacter)
 		DrawCharacter(m_uncompressedCharacter, context);
@@ -1941,19 +1969,17 @@ void CharacterDocument::RenderOriginal(const SRenderContext& context)
 	IRenderer* renderer = gEnv->pRenderer;
 
 	m_compressionMachine->GetAnimationStateText(&m_uncompressedStateTextCache, false);
-	DrawAnimationStateText(renderer, m_uncompressedStateTextCache);
+	DrawAnimationStateText(renderer, m_pAuxRenderer, m_uncompressedStateTextCache);
 }
 
 void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const SRenderContext& context)
 {
 	using namespace Private_CharacterDocument;
-	FUNCTION_PROFILER(GetIEditor()->GetSystem(), PROFILE_EDITOR);
+	CRY_PROFILE_FUNCTION(PROFILE_EDITOR);
 
-	IRenderAuxGeom* pAuxGeom = gEnv->pRenderer->GetIRenderAuxGeom();
-	pAuxGeom->SetRenderFlags(e_Def3DPublicRenderflags);
+	m_pAuxRenderer->SetRenderFlags(e_Def3DPublicRenderflags);
 
 	f32 FrameTime = GetIEditor()->GetSystem()->GetITimer()->GetFrameTime();
-	int yPos = 162;
 
 	// draw joint names
 	if (m_displayOptions->skeleton.showJointNames)
@@ -1970,8 +1996,13 @@ void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const S
 			if (filtered && (strstri(pJointName, m_displayOptions->skeleton.jointFilter) == 0))
 				continue;
 
-			QuatT jointTM = QuatT(m_PhysicalLocation * skeletonPose.GetAbsJointByID(j));
-			IRenderAuxText::DrawLabel(jointTM.t, 1, pJointName);
+			const QuatT jointTM = QuatT(m_PhysicalLocation * skeletonPose.GetAbsJointByID(j));
+
+			SDrawTextInfo ti;
+			ti.scale = Vec2(m_displayOptions->skeleton.showJointNamesFontSize);
+			ti.flags = EDrawTextFlags::eDrawText_FixedSize;
+
+			m_pAuxRenderer->RenderTextQueued(jointTM.t, ti, pJointName);
 		}
 	}
 
@@ -1979,7 +2010,7 @@ void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const S
 	if (m_displayOptions->animation.showTrail && (m_displayOptions->animation.movement == CHARACTER_MOVEMENT_CONTINUOUS))
 	{
 		m_animDrivenSamples.Add(FrameTime, m_PhysicalLocation.t);
-		m_animDrivenSamples.Draw(pAuxGeom);
+		m_animDrivenSamples.Draw(m_pAuxRenderer);
 	}
 	else
 		m_animDrivenSamples.Reset();
@@ -1999,7 +2030,7 @@ void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const S
 	const SRenderingPassInfo& passInfo = *context.passInfo;
 	gEnv->p3DEngine->PrecacheCharacter(NULL, 1.f, pInstanceBase, pInstanceBase->GetIMaterial(), m_LocalEntityMat, 0, 1.f, 4, true, passInfo);
 	pInstanceBase->SetViewdir(context.camera->GetViewdir());
-	pInstanceBase->Render(rp, QuatTS(IDENTITY), passInfo);
+	pInstanceBase->Render(rp, passInfo);
 
 	// draw DCC tool origin
 	if (m_displayOptions->animation.showDccToolOrigin)
@@ -2018,7 +2049,7 @@ void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const S
 
 			const QuatT dccToolOrigin = dccToolOriginInv.GetInverted();
 
-			DrawFrame(pAuxGeom, dccToolOrigin, .3f);
+			DrawFrame(m_pAuxRenderer, dccToolOrigin, .3f);
 
 			IRenderAuxText::Draw2dLabel(12, 50, 1.6f, Col_White, false, "DCC Tool Origin: rot = %f (%f %f %f)", dccToolOrigin.q.w, dccToolOrigin.q.v.x, dccToolOrigin.q.v.y, dccToolOrigin.q.v.z);
 			IRenderAuxText::Draw2dLabel(12, 65, 1.6f, Col_White, false, "DCC Tool Origin: pos = %f %f %f", dccToolOrigin.t.x, dccToolOrigin.t.y, dccToolOrigin.t.z);
@@ -2026,16 +2057,22 @@ void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const S
 	}
 
 	// draw physics
-	if (m_displayOptions->physics.showPhysicalProxies || m_displayOptions->physics.showRagdollJointLimits)
+	if (m_displayOptions->physics.showPhysicalProxies != DisplayPhysicsOptions::DISABLED || m_displayOptions->physics.showRagdollJointLimits != DisplayPhysicsOptions::NONE)
 	{
-		pAuxGeom->SetRenderFlags(e_Mode3D | e_AlphaBlended | e_FillModeSolid | e_CullModeNone | e_DepthWriteOff | e_DepthTestOn);
+		m_pAuxRenderer->SetRenderFlags(e_Mode3D | e_AlphaBlended | e_FillModeSolid | e_CullModeNone | e_DepthWriteOff | e_DepthTestOn);
 		IPhysicsDebugRenderer* pPhysRender = GetIEditor()->GetSystem()->GetIPhysicsDebugRenderer();
 		pPhysRender->UpdateCamera(*context.camera);
 		int iDrawHelpers = 0;
-		if (m_displayOptions->physics.showPhysicalProxies)
-			iDrawHelpers |= 2;
-		if (m_displayOptions->physics.showRagdollJointLimits)
-			iDrawHelpers |= 0x10;
+		switch (m_displayOptions->physics.showPhysicalProxies)
+		{
+			case DisplayPhysicsOptions::TRANSLUCENT: iDrawHelpers |= 1 << 29;
+			case DisplayPhysicsOptions::SOLID: iDrawHelpers |= 2;
+		}
+		switch (m_displayOptions->physics.showRagdollJointLimits)
+		{
+			case DisplayPhysicsOptions::SELECTED: iDrawHelpers |= 1 << 28 | m_displayOptions->physics.selectedBone << 16;
+			case DisplayPhysicsOptions::ALL: iDrawHelpers |= 0x10;
+		}
 		DrawPhysicalEntities(pPhysRender, pInstanceBase, iDrawHelpers);
 		pPhysRender->Flush(FrameTime);
 	}
@@ -2050,7 +2087,7 @@ void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const S
 	pInstanceBase->SetCharEditMode(flags);
 
 	if (m_displayOptions->skeleton.showJoints)
-		DrawSkeleton(pAuxGeom, &pInstanceBase->GetIDefaultSkeleton(), pInstanceBase->GetISkeletonPose(), QuatT(m_PhysicalLocation), m_displayOptions->skeleton.jointFilter, m_viewportState->cameraTarget);
+		DrawSkeleton(m_pAuxRenderer, &pInstanceBase->GetIDefaultSkeleton(), pInstanceBase->GetISkeletonPose(), QuatT(m_PhysicalLocation), m_displayOptions->skeleton.jointFilter, m_viewportState->cameraTarget);
 
 	if (pInstanceBase == m_compressedCharacter)
 	{
@@ -2076,7 +2113,7 @@ void CharacterDocument::DrawCharacter(ICharacterInstance* pInstanceBase, const S
 	}
 
 	if (m_displayOptions->skeleton.showSkeletonBoundingBox)
-		DrawSkeletonBoundingBox(pAuxGeom, pInstanceBase, QuatT(m_PhysicalLocation));
+		DrawSkeletonBoundingBox(m_pAuxRenderer, pInstanceBase, QuatT(m_PhysicalLocation));
 }
 
 void CharacterDocument::CreateShaderParamCallbacks()
@@ -2175,17 +2212,6 @@ bool CharacterDocument::IsExplorerEntrySelected(ExplorerEntry* entry) const
 	return false;
 }
 
-string CharacterDocument::GetDefaultSkeletonAlias()
-{
-	if (!m_compressedCharacter)
-		return string();
-	string skeletonPath = m_compressedCharacter->GetIDefaultSkeleton().GetModelFilePath();
-	string alias = m_system->compressionSkeletonList->FindSkeletonNameByPath(skeletonPath.c_str());
-	if (alias.empty())
-		alias = m_system->compressionSkeletonList->FindSkeletonNameByPath(m_loadedCharacterFilename);
-	return alias;
-}
-
 void CharacterDocument::PreviewAnimationEntry(bool forceRecompile)
 {
 	size_t numLayers = m_system->scene->layers.layers.size();
@@ -2201,7 +2227,6 @@ void CharacterDocument::PreviewAnimationEntry(bool forceRecompile)
 			{
 				SAnimSettings settings;
 				settings.build.compression.SetZeroCompression();
-				settings.build.skeletonAlias = anim->content.newAnimationSkeleton;
 				animSettings[i] = settings;
 				isModified[i] = true;
 			}
@@ -2215,9 +2240,6 @@ void CharacterDocument::PreviewAnimationEntry(bool forceRecompile)
 		}
 		else
 			continue;
-
-		if (animSettings[i].build.skeletonAlias.empty())
-			animSettings[i].build.skeletonAlias = GetDefaultSkeletonAlias();
 	}
 
 	float normalizedTime = 0.0f;

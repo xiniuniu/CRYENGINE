@@ -1,10 +1,10 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Core.h"
 
 #include <CryCore/Platform/platform_impl.inl>
-#include <CryExtension/ICryPluginManager.h>
+#include <CrySystem/ICryPluginManager.h>
 #include <CryGame/IGameFramework.h>
 
 #include <CrySchematyc/Env/EnvPackage.h>
@@ -70,7 +70,9 @@ CCore::CCore()
 	, m_pLogRecorder(new CLogRecorder())
 	, m_pSettingsManager(new CSettingsManager())
 	, m_pUpdateScheduler(new CUpdateScheduler())
-{}
+{
+	gEnv->pSchematyc = this;
+}
 
 CCore::~CCore()
 {
@@ -85,6 +87,7 @@ CCore::~CCore()
 	Schematyc::CVars::Unregister();
 
 	s_pInstance = nullptr;
+	gEnv->pSchematyc = nullptr;
 }
 
 const char* CCore::GetName() const
@@ -122,9 +125,9 @@ bool CCore::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& i
 		m_pLogFileOutput = m_pLog->CreateFileOutput(logFileName.c_str());
 		SCHEMATYC_CORE_ASSERT(m_pLogFileOutput);
 		RefreshLogFileStreams();
-		CVars::sc_LogFileStreams->SetOnChangeCallback(OnLogFileStreamsChange);
+		CVars::sc_LogFileStreams->AddOnChange(OnLogFileStreamsChange);
 		RefreshLogFileMessageTypes();
-		CVars::sc_LogFileMessageTypes->SetOnChangeCallback(OnLogFileMessageTypesChange);
+		CVars::sc_LogFileMessageTypes->AddOnChange(OnLogFileMessageTypesChange);
 	}
 
 	if (CVars::sc_RunUnitTests)
@@ -279,6 +282,7 @@ void CCore::BroadcastSignal(const SObjectSignal& signal)
 
 void CCore::PrePhysicsUpdate()
 {
+	MEMSTAT_FUNCTION_CONTEXT(EMemStatContextType::Other);
 	if (WantPrePhysicsUpdate())
 	{
 		m_pUpdateScheduler->BeginFrame(gEnv->pTimer->GetFrameTime());
@@ -288,6 +292,7 @@ void CCore::PrePhysicsUpdate()
 
 void CCore::Update()
 {
+	MEMSTAT_FUNCTION_CONTEXT(EMemStatContextType::Other);
 	if (WantUpdate())
 	{
 		if (!m_pUpdateScheduler->InFrame())

@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 #include "Blueprints.h"
 #include "DocSerializationContext.h"
 #include "Settings.h"
+#include "CentralEventManager.h"
 
 #include <CrySerialization/CryStrings.h>
 #include <CrySerialization/Enum.h>
@@ -48,6 +49,12 @@ SERIALIZATION_ENUM_BEGIN(EEvaluatorType, "EvaluatorType")
 SERIALIZATION_ENUM(EEvaluatorType::Instant, "Instant", "Instant")
 SERIALIZATION_ENUM(EEvaluatorType::Deferred, "Deferred", "Deferred")
 SERIALIZATION_ENUM(EEvaluatorType::Undefined, "Undefined", "Undefined")
+SERIALIZATION_ENUM_END()
+
+SERIALIZATION_ENUM_BEGIN(EEvaluatorCost, "EvaluatorCost")
+SERIALIZATION_ENUM(EEvaluatorCost::Cheap, "Cheap", "Cheap")
+SERIALIZATION_ENUM(EEvaluatorCost::Expensive, "Expensive", "Expensive")
+SERIALIZATION_ENUM(EEvaluatorCost::Undefined, "Undefined", "Undefined")
 SERIALIZATION_ENUM_END()
 
 //////////////////////////////////////////////////////////////////////////
@@ -111,21 +118,21 @@ public:
 
 	const UQS::Client::IInputParameterRegistry& GetInputParameterRegistry() const
 	{
-		assert(IsValid());
+		CRY_ASSERT(IsValid());
 		if (m_pInstantFactory)
 		{
 			return m_pInstantFactory->GetInputParameterRegistry();
 		}
 		else
 		{
-			assert(m_pDeferredFactory);
+			CRY_ASSERT(m_pDeferredFactory);
 			return m_pDeferredFactory->GetInputParameterRegistry();
 		}
 	}
 
 	bool IsValid() const
 	{
-		assert(!(m_pInstantFactory && m_pDeferredFactory));
+		CRY_ASSERT(!(m_pInstantFactory && m_pDeferredFactory));
 		return m_pInstantFactory || m_pDeferredFactory;
 	}
 
@@ -142,6 +149,34 @@ public:
 		else
 		{
 			return EEvaluatorType::Undefined;
+		}
+	}
+
+	EEvaluatorCost GetCost() const
+	{
+		if (m_pInstantFactory)
+		{
+			switch (m_pInstantFactory->GetCostCategory())
+			{
+			case UQS::Client::IInstantEvaluatorFactory::ECostCategory::Cheap:
+				return EEvaluatorCost::Cheap;
+
+			case UQS::Client::IInstantEvaluatorFactory::ECostCategory::Expensive:
+				return EEvaluatorCost::Expensive;
+
+			default:
+				CRY_ASSERT(0);
+				return EEvaluatorCost::Undefined;
+			}
+		}
+		else if (m_pDeferredFactory)
+		{
+			// deferred evaluators are implicitly always expensive
+			return EEvaluatorCost::Expensive;
+		}
+		else
+		{
+			return EEvaluatorCost::Undefined;
 		}
 	}
 
@@ -225,7 +260,7 @@ CItemUniquePtr::~CItemUniquePtr()
 {
 	if (m_pItem)
 	{
-		assert(m_pItemFactory);
+		CRY_ASSERT(m_pItemFactory);
 		m_pItemFactory->DestroyItems(m_pItem);
 		m_pItem = nullptr;
 	}
@@ -295,7 +330,7 @@ bool Serialize(Serialization::IArchive& archive, CItemUniquePtr& value, const ch
 		}
 		else
 		{
-			assert(archive.isOutput());
+			CRY_ASSERT(archive.isOutput());
 			return value.m_pItemFactory->TrySerializeItem(value.m_pItem, archive, szName, szLabel);
 		}
 	}
@@ -347,7 +382,7 @@ void CFunctionSerializationHelper::CFunctionList::Build(const SItemTypeName& typ
 		{
 			UQS::Client::IFunctionFactory& functionFactory = functionFactoryDB.GetFactory(i);
 			const UQS::Client::IItemFactory* pItemFactoryOfReturnType = UQS::Core::IHubPlugin::GetHub().GetUtils().FindItemFactoryByType(functionFactory.GetReturnType());
-			assert(pItemFactoryOfReturnType);
+			CRY_ASSERT(pItemFactoryOfReturnType);
 			if (pItemFactoryOfReturnType->GetGUID() == typeName.GetTypeGUID() || !context.GetSettings().bFilterAvailableInputsByType)
 			{
 				allFunctions.emplace_back();
@@ -416,8 +451,8 @@ void CFunctionSerializationHelper::CFunctionList::Build(const SItemTypeName& typ
 
 		for (SFunction& func : globalParams)
 		{
-			assert(func.leafFunctionKind == UQS::Client::IFunctionFactory::ELeafFunctionKind::GlobalParam);
-			assert(!func.param.empty());
+			CRY_ASSERT(func.leafFunctionKind == UQS::Client::IFunctionFactory::ELeafFunctionKind::GlobalParam);
+			CRY_ASSERT(!func.param.empty());
 
 			functions.emplace_back(std::move(func));
 			SFunction& iteratedItemFunc = functions.back();
@@ -456,7 +491,11 @@ void CFunctionSerializationHelper::CFunctionList::Build(const SItemTypeName& typ
 			functions.emplace_back(func);
 			SFunction& shuttledItemsFunc = functions.back();
 
-			shuttledItemsFunc.prettyName.Format("SHUTTLE: %s", shuttledItemsFunc.returnType.c_str());
+			const UQS::Shared::CTypeInfo* pContainedType = shuttledItemsFunc.pFactory->GetContainedType();
+			CRY_ASSERT(pContainedType);
+			const UQS::Client::IItemFactory* pItemFactory = UQS::Core::IHubPlugin::GetHub().GetUtils().FindItemFactoryByType(*pContainedType);
+			CRY_ASSERT(pItemFactory);
+			shuttledItemsFunc.prettyName.Format("SHUTTLE: %s", pItemFactory->GetName());
 
 			if (bApplyTypeFilter)
 			{
@@ -503,9 +542,9 @@ int CFunctionSerializationHelper::CFunctionList::SerializeGUID(
 	const int oldFunctionIdx)
 {
 	const bool bIsNpos = (oldFunctionIdx == CFunctionSerializationHelper::npos);
-	const CryGUID oldGUID = bIsNpos ? CryGUID::Null() : m_functions[oldFunctionIdx].guid;
+	const string oldPrettyName = bIsNpos ? "" : m_functions[oldFunctionIdx].prettyName;
 
-	const CKeyValueStringList<CryGUID>::SSerializeResult serializeResult = m_functionsGuidList.Serialize(archive, szName, szLabel, oldGUID, nullptr, &validatorKey);
+	const CKeyValueStringList<CryGUID>::SSerializeResult serializeResult = m_functionsGuidList.SerializeByLabelForDisplayInDropDownList(archive, szName, szLabel, &validatorKey, oldPrettyName);
 	const int newFunctionIdx = serializeResult.newIndex - 1;	// careful: could become -2 if the drop-down-list has no entries ("I GUESS"!)
 	const bool bChanged = newFunctionIdx != oldFunctionIdx;
 
@@ -1114,12 +1153,12 @@ void CInputBlueprint::SetAdditionalParamInfo(const UQS::Client::IInputParameterR
 
 void CInputBlueprint::Serialize(Serialization::IArchive& archive)
 {
-	assert(m_pErrorCollector);
+	CRY_ASSERT(m_pErrorCollector);
 
 	CUqsDocSerializationContext* pContext = archive.context<CUqsDocSerializationContext>();
 	if (!pContext)
 	{
-		assert(false);
+		CRY_ASSERT(false);
 		return;
 	}
 
@@ -1156,7 +1195,7 @@ void CInputBlueprint::Serialize(Serialization::IArchive& archive)
 
 void CInputBlueprint::SerializeRoot(Serialization::IArchive& archive, const char* szName, const char* szLabel, const CUqsDocSerializationContext& context, const SValidatorKey& validatorKey)
 {
-	assert(m_pErrorCollector);
+	CRY_ASSERT(m_pErrorCollector);
 	m_pErrorCollector->Serialize(archive, validatorKey);
 	SerializeChildren(archive, szName, szLabel, context);
 }
@@ -1262,7 +1301,7 @@ void CInputBlueprint::SerializeChildren(Serialization::IArchive& archive, const 
 
 void CInputBlueprint::ClearErrors()
 {
-	assert(m_pErrorCollector);
+	CRY_ASSERT(m_pErrorCollector);
 	m_pErrorCollector->Clear();
 
 	for (CInputBlueprint& input : m_children)
@@ -1393,7 +1432,7 @@ void CConstParamBlueprint::SConstParam::Serialize(Serialization::IArchive& archi
 			{
 				if ((name != oldName) || (type != oldType))
 				{
-					pParamsContext->SetParamsChanged(true);
+					pParamsContext->SetParamsChanged();
 				}
 			}
 		}
@@ -1404,7 +1443,7 @@ void CConstParamBlueprint::SConstParam::Serialize(Serialization::IArchive& archi
 	}
 	else
 	{
-		assert(false); // not supported
+		CRY_ASSERT(false); // not supported
 	}
 }
 
@@ -1446,7 +1485,7 @@ void CConstParamBlueprint::SConstParam::SerializeImpl(Serialization::IArchive& a
 
 void CConstParamBlueprint::SConstParam::ClearErrors()
 {
-	assert(pErrorCollector);
+	CRY_ASSERT(pErrorCollector);
 	pErrorCollector->Clear();
 }
 
@@ -1467,7 +1506,7 @@ size_t CConstParamBlueprint::GetParameterCount() const
 
 void CConstParamBlueprint::GetParameterInfo(size_t index, const char*& szName, const char*& szType, CryGUID& typeGUID, string& value, bool& bAddToDebugRenderWorld, std::shared_ptr<CErrorCollector>& pErrorCollector) const
 {
-	assert(index < m_params.size());
+	CRY_ASSERT(index < m_params.size());
 
 	const SConstParam& param = m_params[index];
 	szName = param.name.c_str();
@@ -1489,7 +1528,7 @@ void CConstParamBlueprint::Serialize(Serialization::IArchive& archive)
 		{
 			if (CParametersListContext* pParamsContext = pContext->GetParametersListContext())
 			{
-				pParamsContext->SetParamsChanged(true);
+				pParamsContext->SetParamsChanged();
 			}
 		}
 	}
@@ -1558,7 +1597,7 @@ void CRuntimeParamBlueprint::SRuntimeParam::Serialize(Serialization::IArchive& a
 			{
 				if ((name != oldName) || (type != oldType))
 				{
-					pParamsContext->SetParamsChanged(true);
+					pParamsContext->SetParamsChanged();
 				}
 			}
 		}
@@ -1597,7 +1636,7 @@ void CRuntimeParamBlueprint::SRuntimeParam::SerializeImpl(Serialization::IArchiv
 
 void CRuntimeParamBlueprint::SRuntimeParam::ClearErrors()
 {
-	assert(pErrorCollector);
+	CRY_ASSERT(pErrorCollector);
 	pErrorCollector->Clear();
 }
 
@@ -1618,7 +1657,7 @@ size_t CRuntimeParamBlueprint::GetParameterCount() const
 
 void CRuntimeParamBlueprint::GetParameterInfo(size_t index, const char*& szName, const char*& szType, CryGUID& typeGUID, bool& bAddToDebugRenderWorld, std::shared_ptr<CErrorCollector>& pErrorCollector) const
 {
-	assert(index < m_params.size());
+	CRY_ASSERT(index < m_params.size());
 
 	const SRuntimeParam& param = m_params[index];
 	szName = param.name.c_str();
@@ -1639,7 +1678,7 @@ void CRuntimeParamBlueprint::Serialize(Serialization::IArchive& archive)
 		{
 			if (CParametersListContext* pParamsContext = pContext->GetParametersListContext())
 			{
-				pParamsContext->SetParamsChanged(true);
+				pParamsContext->SetParamsChanged();
 			}
 		}
 	}
@@ -1710,7 +1749,7 @@ void CGeneratorBlueprint::Serialize(Serialization::IArchive& archive)
 {
 	if (CUqsDocSerializationContext* pContext = archive.context<CUqsDocSerializationContext>())
 	{
-		assert(m_pErrorCollector);
+		CRY_ASSERT(m_pErrorCollector);
 
 		const bool bGUIDChanged = SerializeGUID(archive, "guid", "^", *pContext);
 
@@ -1773,7 +1812,7 @@ bool CGeneratorBlueprint::SerializeGUID(Serialization::IArchive& archive, const 
 	{
 		CKeyValueStringList<CryGUID> generatorGuidList;
 		generatorGuidList.FillFromFactoryDatabase(UQS::Core::IHubPlugin::GetHub().GetGeneratorFactoryDatabase(), true);
-		generatorGuidList.Serialize(archive, szName, szLabel, oldGeneratorGUID, setGUID);
+		generatorGuidList.SerializeByData(archive, szName, szLabel, oldGeneratorGUID, setGUID);
 	}
 	else
 	{
@@ -1818,7 +1857,7 @@ void CGeneratorBlueprint::PrepareHelpers(CUqsDocSerializationContext& context)
 
 void CGeneratorBlueprint::ClearErrors()
 {
-	assert(m_pErrorCollector);
+	CRY_ASSERT(m_pErrorCollector);
 	m_pErrorCollector->Clear();
 	m_inputs.ClearErrors();
 }
@@ -1955,7 +1994,7 @@ const CryGUID& CDeferredEvaluatorBlueprint::GetEvaluatorGUID() const
 
 CEvaluator& SEvaluatorBlueprintAdapter::Owner() const
 {
-	assert(m_pOwner);
+	CRY_ASSERT(m_pOwner);
 	return *m_pOwner;
 }
 
@@ -2091,6 +2130,7 @@ CEvaluator::CEvaluator(const EEvaluatorType type)
 	, m_inputs()
 	, m_pErrorCollector(new CErrorCollector)
 	, m_evaluatorType(EEvaluatorType::Undefined)
+	, m_evaluatorCost(EEvaluatorCost::Undefined)
 {
 	SetType(type);
 }
@@ -2124,6 +2164,7 @@ CEvaluator::CEvaluator(CEvaluator&& other)
 	, m_bNegateDiscard(other.m_bNegateDiscard)
 	, m_pErrorCollector(std::move(other.m_pErrorCollector))
 	, m_evaluatorType(other.m_evaluatorType)
+	, m_evaluatorCost(other.m_evaluatorCost)
 	, m_interfaceAdapter(std::move(other.m_interfaceAdapter))
 {
 	if (m_interfaceAdapter)
@@ -2140,6 +2181,7 @@ CEvaluator::CEvaluator()
 	, m_inputs()
 	, m_pErrorCollector(new CErrorCollector)
 	, m_evaluatorType(EEvaluatorType::Undefined)
+	, m_evaluatorCost(EEvaluatorCost::Undefined)
 	, m_interfaceAdapter()
 {
 
@@ -2156,6 +2198,7 @@ CEvaluator& CEvaluator::operator=(CEvaluator&& other)
 		m_bNegateDiscard = other.m_bNegateDiscard;
 		m_pErrorCollector = std::move(other.m_pErrorCollector);
 		m_evaluatorType = other.m_evaluatorType;
+		m_evaluatorCost = other.m_evaluatorCost;
 		m_interfaceAdapter = std::move(other.m_interfaceAdapter);
 		if (m_interfaceAdapter)
 		{
@@ -2169,7 +2212,7 @@ void CEvaluator::Serialize(Serialization::IArchive& archive)
 {
 	if (CUqsDocSerializationContext* pContext = archive.context<CUqsDocSerializationContext>())
 	{
-		assert(m_pErrorCollector);
+		CRY_ASSERT(m_pErrorCollector);
 
 		const bool bGUIDChanged = SerializeEvaluatorGUID(archive, "evaluatorGUID", "^", *pContext);
 
@@ -2189,6 +2232,7 @@ void CEvaluator::Serialize(Serialization::IArchive& archive)
 			if (factory.IsValid())
 			{
 				SetType(factory.GetType());
+				m_evaluatorCost = factory.GetCost();
 				if (bGUIDChanged)
 				{
 					m_inputs.ResetChildrenFromFactory(factory, *pContext);
@@ -2211,6 +2255,9 @@ void CEvaluator::Serialize(Serialization::IArchive& archive)
 			{
 				archive.warning(m_evaluatorType, "Undefined evaluator type");
 			}
+
+			// Evaluator cost (read-only)
+			archive(m_evaluatorCost, "evaluatorCost", "!Evaluator cost");
 
 			archive(m_weight, "weight", "Weight");
 
@@ -2244,7 +2291,7 @@ bool CEvaluator::SerializeEvaluatorGUID(Serialization::IArchive& archive, const 
 		CKeyValueStringList<CryGUID> evaluatorGuidList;
 		evaluatorGuidList.FillFromFactoryDatabase(UQS::Core::IHubPlugin::GetHub().GetInstantEvaluatorFactoryDatabase(), true);
 		evaluatorGuidList.FillFromFactoryDatabase(UQS::Core::IHubPlugin::GetHub().GetDeferredEvaluatorFactoryDatabase(), false);
-		evaluatorGuidList.Serialize(archive, szName, szLabel, oldGUID, setGUID);
+		evaluatorGuidList.SerializeByData(archive, szName, szLabel, oldGUID, setGUID);
 	}
 	else
 	{
@@ -2265,7 +2312,7 @@ void CEvaluator::SerializeScoreTransformGUID(Serialization::IArchive& archive, c
 	{
 		CKeyValueStringList<CryGUID> scoreTransformsList;
 		scoreTransformsList.FillFromFactoryDatabase(UQS::Core::IHubPlugin::GetHub().GetScoreTransformFactoryDatabase(), true);
-		scoreTransformsList.Serialize(archive, szName, szLabel, oldScoreTransformGUID, setScoreTransformGUID);
+		scoreTransformsList.SerializeByData(archive, szName, szLabel, oldScoreTransformGUID, setScoreTransformGUID);
 	}
 	else
 	{
@@ -2299,7 +2346,7 @@ void CEvaluator::PrepareHelpers(CUqsDocSerializationContext& context)
 
 void CEvaluator::ClearErrors()
 {
-	assert(m_pErrorCollector);
+	CRY_ASSERT(m_pErrorCollector);
 	m_pErrorCollector->Clear();
 	m_inputs.ClearErrors();
 }
@@ -2514,7 +2561,7 @@ bool SQueryFactoryType::Serialize(Serialization::IArchive& archive, const char* 
 	{
 		CKeyValueStringList<CryGUID> queryGuidList;
 		queryGuidList.FillFromFactoryDatabase(UQS::Core::IHubPlugin::GetHub().GetQueryFactoryDatabase(), true);
-		queryGuidList.Serialize(archive, szName, szLabel, oldGUID, setGUID);
+		queryGuidList.SerializeByData(archive, szName, szLabel, oldGUID, setGUID);
 	}
 	else
 	{
@@ -2854,7 +2901,7 @@ void CQueryBlueprint::CheckQueryTraitsChange(const SQueryFactoryType::CTraits& q
 	{
 		if (oldTraits.SupportsParameters() != queryTraits.SupportsParameters())
 		{
-			paramListContext.SetParamsChanged(true);
+			paramListContext.SetParamsChanged();
 			if (!queryTraits.SupportsParameters())
 			{
 				m_constParams = CConstParamBlueprint();
@@ -2887,7 +2934,7 @@ void CQueryBlueprint::CheckQueryTraitsChange(const SQueryFactoryType::CTraits& q
 
 void CQueryBlueprint::Serialize(Serialization::IArchive& archive)
 {
-	assert(m_pErrorCollector);
+	CRY_ASSERT(m_pErrorCollector);
 
 	m_pErrorCollector->Serialize(archive, *this);
 
@@ -2925,7 +2972,7 @@ void CQueryBlueprint::Serialize(Serialization::IArchive& archive)
 
 		if (paramListContext.GetParamsChanged())
 		{
-			assert(archive.isInput());
+			CRY_ASSERT(archive.isInput());
 
 			if (pContext)
 			{
@@ -2943,7 +2990,7 @@ void CQueryBlueprint::Serialize(Serialization::IArchive& archive)
 
 		if (selectedGeneratorContext.GetGeneratorChanged())
 		{
-			assert(archive.isInput());
+			CRY_ASSERT(archive.isInput());
 
 			if (pContext)
 			{
@@ -2982,7 +3029,7 @@ void CQueryBlueprint::PrepareHelpers(CUqsDocSerializationContext& context)
 
 void CQueryBlueprint::ClearErrors()
 {
-	assert(m_pErrorCollector);
+	CRY_ASSERT(m_pErrorCollector);
 	m_pErrorCollector->Clear();
 	m_constParams.ClearErrors();
 	m_runtimeParams.ClearErrors();
@@ -3023,6 +3070,12 @@ CParametersListContext::~CParametersListContext()
 	}
 }
 
+void CParametersListContext::SetParamsChanged()
+{
+	m_bParamsChanged = true;
+	CCentralEventManager::QueryBlueprintRuntimeParamsChanged(CCentralEventManager::SQueryBlueprintRuntimeParamsChangedEventArgs(*m_pOwner));
+}
+
 void CParametersListContext::BuildFunctionListForAvailableParameters(
   const SItemTypeName& typeNameToFilter,
   const CUqsDocSerializationContext& context,
@@ -3030,7 +3083,7 @@ void CParametersListContext::BuildFunctionListForAvailableParameters(
   std::vector<CFunctionSerializationHelper::SFunction>& outParamFunctions)
 {
 	outParamFunctions.clear();
-	assert(m_pOwner);
+	CRY_ASSERT(m_pOwner);
 	if (!m_pOwner)
 	{
 		return;
@@ -3052,7 +3105,7 @@ void CParametersListContext::BuildFunctionListForAvailableParameters(
 			{
 				for (const auto& func : allGlobalParamFunctions)
 				{
-					assert(func.pFactory);
+					CRY_ASSERT(func.pFactory);
 					if (func.returnType == param.type)
 					{
 						outParamFunctions.emplace_back(func);
@@ -3072,7 +3125,7 @@ void CParametersListContext::BuildFunctionListForAvailableParameters(
 			{
 				for (const auto& func : allGlobalParamFunctions)
 				{
-					assert(func.pFactory);
+					CRY_ASSERT(func.pFactory);
 					if (func.returnType == param.type)
 					{
 						outParamFunctions.emplace_back(func);
@@ -3116,7 +3169,7 @@ void CSelectedGeneratorContext::BuildFunctionListForAvailableGenerators(
   std::vector<CFunctionSerializationHelper::SFunction>& outParamFunctions)
 {
 	outParamFunctions.clear();
-	assert(m_pOwner);
+	CRY_ASSERT(m_pOwner);
 	if (!m_pOwner)
 	{
 		return;

@@ -17,7 +17,7 @@ endfunction()
 function(make_library list_name path)
 	set( ${list_name}_TMP )
 	foreach(s ${${list_name}})
-		if (WIN32 OR WIN64 OR DURANGO)
+		if (WINDOWS OR DURANGO)
 			list(APPEND ${list_name}_TMP "${path}${s}.lib")
 		else()
 			list(APPEND ${list_name}_TMP "${path}lib${s}.a")
@@ -27,7 +27,7 @@ function(make_library list_name path)
 endfunction()
 
 macro(set_libpath_flag)
-	if (WIN64 OR WIN32 OR DURANGO)
+	if (WINDOWS OR DURANGO)
 		set(LIBPATH_FLAG " /LIBPATH:")
 	else()
 		set(LIBPATH_FLAG " -L")
@@ -35,18 +35,14 @@ macro(set_libpath_flag)
 endmacro()
 
 function(USE_MSVC_PRECOMPILED_HEADER TargetProject PrecompiledHeader PrecompiledSource)
-  if(NOT ${CMAKE_GENERATOR} MATCHES "Visual Studio")
-    # Now only support precompiled headers for the Visual Studio projects
-    return()
-  endif()
+	if(NOT ${CMAKE_GENERATOR} MATCHES "Visual Studio")
+		# Now only support precompiled headers for the Visual Studio projects
+		return()
+	endif()
 
-  if (OPTION_UNITY_BUILD AND UBERFILES)
-	return()
-  endif()
-  
-  if (OPTION_PCH AND MSVC)
-		#message("Enable PCH for ${TargetProject}")
-		if (WIN32 OR DURANGO)
+	if (OPTION_PCH AND MSVC)
+		message(STATUS "Enable PCH for ${TargetProject}")
+		if (WINDOWS OR DURANGO)
 			if(${CMAKE_GENERATOR} MATCHES "Visual Studio")
 				# Inside Visual Studio
 				set(PCH_FILE "$(IntDir)$(TargetName).pch")
@@ -54,6 +50,8 @@ function(USE_MSVC_PRECOMPILED_HEADER TargetProject PrecompiledHeader Precompiled
 				get_filename_component(PCH_NAME "${PrecompiledSource}" NAME_WE)
 				set(PCH_FILE "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${TargetProject}.dir/${PCH_NAME}.pch")
 			endif()
+
+			target_compile_options(${TargetProject} PRIVATE "-DUSE_PCH")
 
 			#set_target_properties(${TargetProject} PROPERTIES COMPILE_FLAGS "/Yu\"${PrecompiledHeader}\" /Fp\"${PCH_FILE}\"")
 			set_source_files_properties("${PrecompiledSource}" PROPERTIES COMPILE_FLAGS " /Yc\"${PrecompiledHeader}\" /Fp\"${PCH_FILE}\" ")
@@ -74,11 +72,21 @@ function(USE_MSVC_PRECOMPILED_HEADER TargetProject PrecompiledHeader Precompiled
 			#set_source_files_properties(${PrecompiledSource} PROPERTIES COMPILE_FLAGS "/Yc\"${PrecompiledHeader}\"")
 		endif()
 	endif()
+
+	get_target_property(HAS_AUTOMOC ${TargetProject} AUTOMOC)
+	if (HAS_AUTOMOC STREQUAL "TRUE")
+		set (MOC_COMPILATION "${CMAKE_CURRENT_BINARY_DIR}/${TargetProject}_autogen/mocs_compilation.cpp")
+		# Regardless of PCH, stdafx.h needs to be includeded to ensure platform definitions are visible
+		set_property(SOURCE "${MOC_COMPILATION}" APPEND_STRING PROPERTY COMPILE_FLAGS " /FI\"${PrecompiledHeader}\"")
+		if (OPTION_PCH)
+			set_property(SOURCE "${MOC_COMPILATION}" APPEND_STRING PROPERTY COMPILE_FLAGS " /Yu\"${PrecompiledHeader}\" /Fp\"${PCH_FILE}\" -DUSE_PCH")
+		endif()
+	endif()
 endfunction()
 
 MACRO(EXCLUDE_FILE_FROM_MSVC_PRECOMPILED_HEADER)
 	if (MSVC)
-		if (WIN32 OR DURANGO)
+		if (WINDOWS OR DURANGO)
 			set_property( SOURCE ${ARGN} APPEND PROPERTY COMPILE_FLAGS "/Y-")
 		endif()
 	endif()
@@ -103,21 +111,52 @@ macro(set_solution_startup_target target)
 	endif()
 endmacro()
 
+macro(set_output_directory TargetProject)
+		get_target_property(libout ${TargetProject} LIBRARY_OUTPUT_DIRECTORY)
+		get_target_property(runout ${TargetProject} RUNTIME_OUTPUT_DIRECTORY)
+		if (NOT libout)
+			set(libout "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+		endif()
+		if (NOT runout)
+			set(runout "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+		endif()
+
+		# Iterate Debug/Release configs and adds _DEBUG or _RELEASE
+		foreach( OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES} )
+			string( TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG )
+
+			string(REPLACE ${BASE_OUTPUT_DIRECTORY} ${BASE_OUTPUT_DIRECTORY_${OUTPUTCONFIG}} libout_config "${libout}")
+			string(REPLACE ${BASE_OUTPUT_DIRECTORY} ${BASE_OUTPUT_DIRECTORY_${OUTPUTCONFIG}} runout_config "${runout}")
+
+			set_target_properties(${TargetProject} PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${libout_config})
+			set_target_properties(${TargetProject} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${runout_config})
+		endforeach( OUTPUTCONFIG CMAKE_CONFIGURATION_TYPES )
+endmacro()
+
 MACRO(SET_PLATFORM_TARGET_PROPERTIES TargetProject)
 	target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DCODE_BASE_FOLDER=\"${CRYENGINE_DIR}/Code/\"")
 	target_link_libraries( ${THIS_PROJECT} PRIVATE ${COMMON_LIBS} )
 
+	if(OPTION_DEVELOPER_CONSOLE_IN_RELEASE)
+		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DENABLE_DEVELOPER_CONSOLE_IN_RELEASE")
+	endif()
+
 	if(OPTION_UNSIGNED_PAKS_IN_RELEASE)
 		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DSUPPORT_UNSIGNED_PAKS")
 	endif()
+
+	if (OPTION_REMOTE_CONSOLE)
+		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DUSE_REMOTE_CONSOLE")
+	endif()
 		
-	IF(DURANGO)
+		
+	if(DURANGO)
 		set_target_properties_for_durango(${TargetProject})
-	ENDIF(DURANGO)
-	IF(ORBIS)
+	endif(DURANGO)
+	if(ORBIS)
 		set_target_properties_for_orbis(${TargetProject})
-	ENDIF(ORBIS)
-	if(WIN64)
+	endif(ORBIS)
+	if(WINDOWS)
 		set_property(TARGET ${TargetProject} PROPERTY VS_GLOBAL_PreferredToolArchitecture x64)
 	endif()
   
@@ -133,28 +172,118 @@ MACRO(SET_PLATFORM_TARGET_PROPERTIES TargetProject)
 	endif()
 	
 	if(CMAKE_RUNTIME_OUTPUT_DIRECTORY)
-		get_target_property(libout ${TargetProject} LIBRARY_OUTPUT_DIRECTORY)
-		get_target_property(runout ${TargetProject} RUNTIME_OUTPUT_DIRECTORY)
-		if (NOT libout)
-			set(libout "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-		endif()
-		if (NOT runout)
-			set(runout "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-		endif()
+		set_output_directory(${TargetProject})
+	endif()
 
-		# Iterate Debug/Release configs and adds _DEBUG or _RELEASE
+	if (OPTION_SHOW_COMPILE_METRICS)
+		set(MSVC_COMMON_FLAGS ${MSVC_COMMON_FLAGS} /d2cgsummary)
+	endif()
+
+	if (OPTION_LTCG)
+		option(LTCG_${TargetProject} "Enable link-time code generation for ${TargetProject} (requires OPTION_LTCG)" ON)
+		if (LTCG_${TargetProject})
+			if (MSVC_VERSION)
+				target_compile_options(${TargetProject} PRIVATE /GL)
+				set(LTCG_FLAG /LTCG)
+				if (OPTION_PGO STREQUAL "Generate")
+					set(LTCG_FLAG "${LTCG_FLAG} /GENPROFILE")
+				elseif(OPTION_PGO STREQUAL "Use")
+					set(LTCG_FLAG "${LTCG_FLAG} /USEPROFILE")
+				endif()
+			else()
+				if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+					if(OPTION_PGO_INSTRUMENT)
+						set(PGO_TYPE "-fprofile-instr")
+					else()
+						set(PGO_TYPE "-fprofile-sample")
+					endif()
+				else()
+					target_compile_options(${TargetProject} PRIVATE -flto)
+					set(LTCG_FLAG "-flto")
+					set(PGO_TYPE "-fprofile")
+				endif()
+				if (OPTION_PGO STREQUAL "Generate")
+					target_compile_options(${TargetProject} "${PGO_TYPE}-generate")
+				elseif(OPTION_PGO STREQUAL "Use")
+					target_compile_options(${TargetProject} "${PGO_TYPE}-use")
+				endif()
+			endif()
+			if (LTCG_FLAG)
+				set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " ${LTCG_FLAG}")
+			endif()
+		endif()
+	endif()
+
+	if (OPTION_MSVC_PERMISSIVE_MINUS)
+		if(NOT MODULE_MSVC_PERMISSIVE)
+			get_target_property(is_editor_module_flags ${TargetProject} EDITOR_MODULE_FLAGS)
+			if(NOT is_editor_module_flags STREQUAL "TRUE")
+				#Enable /permissive- compile option
+				target_compile_options(${TargetProject} PRIVATE "/permissive-")
+			endif()
+		endif()
+	endif()
+
+	# Patch linker flags for recode, setup environment path for executables
+	if (OPTION_RECODE AND EXISTS RECODE_INSTALL_PATH)
+		patch_recode_linker_property(${TargetProject} LINK_FLAGS)
 		foreach( OUTPUTCONFIG ${CMAKE_CONFIGURATION_TYPES} )
 			string( TOUPPER ${OUTPUTCONFIG} OUTPUTCONFIG )
-			set_target_properties(${TargetProject} PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${libout})
-			set_target_properties(${TargetProject} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${runout})
-		endforeach( OUTPUTCONFIG CMAKE_CONFIGURATION_TYPES )
+			patch_recode_linker_property(${TargetProject} LINK_FLAGS_${OUTPUTCONFIG})
+		endforeach()
+		get_target_property(type ${TargetProject} TYPE)
+		if (type STREQUAL "EXECUTABLE")
+			if (WINDOWS)
+				set(platform x64)
+			endif()
+			file( WRITE "${CMAKE_CURRENT_BINARY_DIR}/${TargetProject}.vcxproj.user" 
+  "<?xml version=\"1.0\" encoding=\"utf-8\"?>
+  <Project ToolsVersion=\"14.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">
+		<PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='Debug|${platform}'\">
+			<DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+			<LocalDebuggerEnvironment>PATH=$(Path);${RECODE_INSTALL_PATH}
+$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
+		</PropertyGroup>
+		<PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='Profile|${platform}'\">
+			<DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+			<LocalDebuggerEnvironment>PATH=$(Path);${RECODE_INSTALL_PATH}
+$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
+		</PropertyGroup>		
+		<PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='Release|${platform}'\">
+			<DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+			<LocalDebuggerEnvironment>PATH=$(Path);${RECODE_INSTALL_PATH}
+$(LocalDebuggerEnvironment)</LocalDebuggerEnvironment>
+		</PropertyGroup>
+	</Project>")		
+		endif()
 	endif()
+
 ENDMACRO(SET_PLATFORM_TARGET_PROPERTIES)
 
 function(JOIN VALUES GLUE OUTPUT)
 	string (REPLACE ";" "${GLUE}" _TMP_STR "${VALUES}")
 	set (${OUTPUT} "${_TMP_STR}" PARENT_SCOPE)
 endfunction()
+
+macro(patch_recode_linker_flags var)
+	if (OPTION_RECODE)
+		set(temp ${${var}})
+		string(REGEX REPLACE "/INCREMENTAL[^\\s]*(\\s|$)" "" temp "${temp}")
+		string(REGEX REPLACE "/DEBUG[^\\s]*(\\s|$)" "" temp "${temp}")
+		string(REGEX REPLACE "/OPT:REF[^\\s]*(\\s|$)" "" temp "${temp}")
+		string(REGEX REPLACE "/OPT:ICF[^\\s]*(\\s|$)" "" temp "${temp}")
+		string(REGEX REPLACE "/LTCG[^\\s]*(\\s|$)" "" temp "${temp}")
+		set(${var} "${temp} /DEBUG /INCREMENTAL")
+	endif()
+endmacro()
+
+macro(patch_recode_linker_property TargetProject propname)
+	get_target_property(flags ${TargetProject} ${propname})
+	if(flags)
+		patch_recode_linker_flags(flags)
+		set_target_properties(${TargetProject} PROPERTIES ${propname} ${flags})
+	endif()
+endmacro()
 
 # Writes an uber file to disk
 # If uber file already exist it's contents are compared and the file only is overridden if it changed, to allow incremental compilations.
@@ -212,9 +341,10 @@ function(enable_unity_build UB_FILENAME SOURCE_VARIABLE_NAME)
 		# Group Uber files in solution project
 		source_group("UBER FILES" FILES "${unit_build_file}")
 		set_source_files_properties("${unit_build_file}" PROPERTIES GENERATED true)
+		set_source_files_properties("${unit_build_file}" PROPERTIES SKIP_AUTOMOC true)
 
 		# Turn off precompiled header
-		if (WIN32 OR DURANGO)
+		if (WINDOWS OR DURANGO)
 			#set_source_files_properties(${unit_build_file} PROPERTIES COMPILE_FLAGS "/Y-")
 		endif()
 	endif()
@@ -230,7 +360,7 @@ endmacro()
 #Specifies a set of platforms that should build source files provided after this point. Specify ALL to build for all platforms.
 #Syntax: sources_platform([OR] X Y Z [AND A B C])
 #Subsequent source files will be built if "if(T)" is true for at least one token T in OR and all tokens T in AND.
-#Example: sources_platform(WIN32 ANDROID AND HAS_FOO) = build if target is Windows or Android, and HAS_FOO is true.
+#Example: sources_platform(WINDOWS ANDROID AND HAS_FOO) = build if target is Windows or Android, and HAS_FOO is true.
 macro(sources_platform)
 	set(PLATFORM_CONDITION)
 	set(multiValueArgs OR AND)
@@ -324,6 +454,41 @@ macro(add_sources name)
 	endforeach()
 endmacro()
 
+# Automatically add sources in current CMakeLists directory, respecting directory structure
+macro(add_sources_recursive_search)
+	set(_src_root_path "${CMAKE_CURRENT_SOURCE_DIR}")
+	file(
+		GLOB_RECURSE _source_list 
+		LIST_DIRECTORIES false
+		"${_src_root_path}/*.cpp"
+		"${_src_root_path}/*.h"
+	)
+
+	foreach(_source IN ITEMS ${_source_list})
+		get_filename_component(_source_path "${_source}" PATH)
+		file(RELATIVE_PATH _source_path_rel "${_src_root_path}" "${_source_path}")
+		string(REPLACE "/" "\\" _group_path "${_source_path_rel}")
+		source_group("${_group_path}" FILES "${_source}")
+		file(RELATIVE_PATH _source_rel "${_src_root_path}" "${_source}")
+		
+		if (_group_path STREQUAL "")
+			set(_group_path "Root")
+		endif()
+		
+		string(REPLACE "\\" "_" _group_path "${_group_path}")
+		
+		set(_group_path "${_group_path}.cpp")
+		
+		list(FIND UBERFILES ${_group_path} GROUP_INDEX)			
+		if(GROUP_INDEX EQUAL -1)
+			list(APPEND UBERFILES "${_group_path}")
+			set(${_group_path}_PROJECTS ${UB_PROJECTS})
+		endif()
+		
+		add_to_uberfile(${_group_path} ${_source_rel})
+	endforeach()
+endmacro()
+
 macro(get_source_group output group)
 	string(REPLACE " " "_" group_var ${group})	
 	set(${output} ${SOURCE_GROUP_${group_var}})
@@ -333,7 +498,10 @@ macro(end_sources)
 endmacro()
 
 macro(generate_uber_files)
-	if(OPTION_UNITY_BUILD AND UBERFILES)
+	if(UBERFILES)
+		option(UNITY_${THIS_PROJECT} "Enable unity building for ${THIS_PROJECT} (requires OPTION_UNITY_BUILD)" ON)
+	endif()
+	if(OPTION_UNITY_BUILD AND UBERFILES AND UNITY_${THIS_PROJECT})
 		list(REMOVE_DUPLICATES UBERFILES)
 		foreach(u ${UBERFILES})
 			set(UB_PROJECTS ${${u}_PROJECTS})
@@ -368,7 +536,7 @@ macro(force_static_crt)
 endmacro()
 
 macro(read_settings)
-	set(options DISABLE_MFC FORCE_STATIC FORCE_SHARED EDITOR_COMPILE_SETTINGS)
+	set(options DISABLE_MFC FORCE_STATIC FORCE_SHARED FORCE_SHARED_WIN EDITOR_COMPILE_SETTINGS MSVC_PERMISSIVE)
 	set(oneValueArgs SOLUTION_FOLDER PCH OUTDIR)
 	set(multiValueArgs FILE_LIST INCLUDES LIBS DEFINES)
 	cmake_parse_arguments(MODULE "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -376,7 +544,10 @@ macro(read_settings)
 		string(REPLACE ".cpp" ".h" MODULE_PCH_HEADER_FILE ${MODULE_PCH})
 		get_filename_component(MODULE_PCH_H ${MODULE_PCH_HEADER_FILE} NAME)
 	endif()
-	if (MODULE_FORCE_SHARED AND ORBIS)
+	if (MODULE_FORCE_SHARED_WIN AND WINDOWS)
+		set(MODULE_FORCE_SHARED TRUE)
+	endif()
+	if (MODULE_FORCE_SHARED AND (ORBIS))
 		set(MODULE_FORCE_SHARED FALSE)
 	endif()
 endmacro()
@@ -395,7 +566,10 @@ endmacro()
 
 macro(apply_compile_settings)
 	if (MODULE_PCH)
-		USE_MSVC_PRECOMPILED_HEADER( ${THIS_PROJECT} ${MODULE_PCH_H} ${MODULE_PCH} )
+		#CryQt defines incompatible DLLExport in stdafx, temporarily disable PCH for CryQt now
+		if (NOT "${THIS_PROJECT}" STREQUAL "CryQt")
+			USE_MSVC_PRECOMPILED_HEADER( ${THIS_PROJECT} ${MODULE_PCH_H} ${MODULE_PCH} )
+		endif()
 		set_property(TARGET ${THIS_PROJECT} APPEND PROPERTY AUTOMOC_MOC_OPTIONS -b${MODULE_PCH_H})
 	endif()
 	if (MODULE_OUTDIR)
@@ -406,17 +580,37 @@ macro(apply_compile_settings)
 	if(MODULE_SOLUTION_FOLDER)
 		set_solution_folder("${MODULE_SOLUTION_FOLDER}" ${THIS_PROJECT})
 	endif()
+
+	if (WINDOWS AND NOT OPTION_DEDICATED_SERVER)
+		target_compile_options(${THIS_PROJECT} PRIVATE $<$<CONFIG:Release>:-DPURE_CLIENT>)
+	endif()
 	
 	if (DEFINED PROJECT_BUILD_CRYENGINE AND NOT PROJECT_BUILD_CRYENGINE)
 		# If option to not build engine modules is selected they are excluded from the build
 		set_target_properties(${THIS_PROJECT} PROPERTIES EXCLUDE_FROM_ALL TRUE)
 		set_target_properties(${THIS_PROJECT} PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD TRUE)
 	endif()
+
+	get_target_property(target_type ${THIS_PROJECT} TYPE)
+	if (target_type MATCHES "EXECUTABLE")
+		target_compile_options(${THIS_PROJECT} PRIVATE -DCRY_IS_APPLICATION)
+	endif()
+endmacro()
+
+macro(apply_ltcg_if_enabled)
+	if (OPTION_STATIC_LINKING AND OPTION_LTCG)
+		if (MSVC_VERSION)
+			string(APPEND CMAKE_STATIC_LINKER_FLAGS " /LTCG")
+		else ()
+			string(APPEND CMAKE_STATIC_LINKER_FLAGS " -flto") # GCC & Clang
+		endif()
+		set(CMAKE_STATIC_LINKER_FLAGS ${CMAKE_STATIC_LINKER_FLAGS} CACHE STRING "" FORCE)
+	endif()
 endmacro()
 
 function(CryEngineModule target)
 	prepare_project(${ARGN})
-	
+
 	if ((OPTION_STATIC_LINKING OR MODULE_FORCE_STATIC) AND NOT MODULE_FORCE_SHARED)
 		# Static modules must not contain resource files
 		remove_files_from_list( ${THIS_PROJECT}_SOURCES ".*\\.rc$")
@@ -431,45 +625,112 @@ function(CryEngineModule target)
 	endif()
 	if (MODULE_EDITOR_COMPILE_SETTINGS)
 		set_editor_module_flags()
-	else()
+	elseif(NOT MODULE_FORCE_SHARED)
 		set(MODULES ${MODULES} ${THIS_PROJECT} CACHE INTERNAL "List of engine being built" FORCE)	
 	endif()
+
+	if (MSVC)
+		if (${THIS_PROJECT} STREQUAL "EditorCommon" OR ${THIS_PROJECT} STREQUAL "MFCToolsPlugin")
+			# These editor plugins are built using CryEngineModule, but need to have RTTI enabled.
+			target_compile_options(${THIS_PROJECT} PRIVATE /GR)
+		else()
+			target_compile_options(${THIS_PROJECT} PRIVATE /GR-)
+		endif()
+	endif()
+
 	apply_compile_settings()
 	if ((OPTION_STATIC_LINKING OR MODULE_FORCE_STATIC) AND NOT MODULE_FORCE_SHARED)
 		target_compile_definitions(${THIS_PROJECT} PRIVATE _LIB -DCRY_IS_MONOLITHIC_BUILD)
-	else()
-		generate_rc_file()
 	endif()
+	add_metadata()
 	if (ANDROID AND NOT OPTION_STATIC_LINKING AND NOT MODULE_FORCE_STATIC) 
 		set(SHARED_MODULES ${SHARED_MODULES} ${THIS_PROJECT} CACHE INTERNAL "Shared modules for APK creation" FORCE)
 		target_link_libraries(${THIS_PROJECT} PRIVATE m log c android)
 	endif()
 
+	if(OPTION_DEDICATED_SERVER)
+		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DDEDICATED_SERVER")
+	endif()
+
 	if (NOT DEFINED PROJECT_BUILD_CRYENGINE OR PROJECT_BUILD_CRYENGINE)
 		install(TARGETS ${target} LIBRARY DESTINATION bin RUNTIME DESTINATION bin ARCHIVE DESTINATION lib)
 	endif()
+
+	apply_ltcg_if_enabled()
+
 endfunction()
 
 function(CryGameModule target)
 	prepare_project(${ARGN})
-	add_library(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
-	apply_compile_settings()
-	if (NOT game_folder)
-		set(game_folder ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "Game folder used for resource files on Windows" FORCE)
+	if (OPTION_STATIC_LINKING AND NOT OPTION_STATIC_LINKING_WITH_GAME_AS_DLL)
+		add_library(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
+	else()
+		add_library(${THIS_PROJECT} SHARED ${${THIS_PROJECT}_SOURCES})
 	endif()
+	apply_compile_settings()
+	set(game_folder ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "Game folder used for resource files on Windows" FORCE)
 	set(GAME_MODULES ${GAME_MODULES} ${THIS_PROJECT} CACHE INTERNAL "List of game modules being built" FORCE)
-	if (OPTION_STATIC_LINKING)
+	list(LENGTH GAME_MODULES NUM_GAME_MODULES)
+	if (NUM_GAME_MODULES GREATER 1 AND NOT OPTION_RUNTIME_CVAR_OVERRIDES)
+		message(FATAL_ERROR " OPTION_RUNTIME_CVAR_OVERRIDES should be enabled when having more than one project enabled. Add sys_cvar_overrides_path = <path to CVarOverrides.h> e.g. Code/GameSDK/GameDLL/CVarOverrides.h to your system.cfg")
+	endif()
+
+	if (OPTION_STATIC_LINKING AND NOT OPTION_STATIC_LINKING_WITH_GAME_AS_DLL)
 		target_compile_definitions(${THIS_PROJECT} PRIVATE _LIB -DCRY_IS_MONOLITHIC_BUILD)
 	elseif(ANDROID)
 		set(SHARED_MODULES ${SHARED_MODULES} ${THIS_PROJECT} CACHE INTERNAL "Shared modules for APK creation" FORCE)
 		target_link_libraries(${THIS_PROJECT} PRIVATE m log c android)
-	else()
-		generate_rc_file()
+	endif()
+
+	add_metadata()
+
+	if(OPTION_DEDICATED_SERVER)
+		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DDEDICATED_SERVER")
 	endif()
 
 	if (NOT DEFINED PROJECT_BUILD_CRYENGINE OR PROJECT_BUILD_CRYENGINE)
 		install(TARGETS ${target} LIBRARY DESTINATION bin RUNTIME DESTINATION bin ARCHIVE DESTINATION lib)
 	endif()
+
+	file(READ "${CMAKE_BINARY_DIR}/ProjectCVarOverrides.h" project_cvar_overrides_h_content)
+	if(EXISTS "${game_folder}/CVarOverrides.h" AND NOT OPTION_RUNTIME_CVAR_OVERRIDES)
+		if(NOT project_cvar_overrides_h_content STREQUAL "#include \"${game_folder}/CVarOverrides.h\"")
+			file(WRITE "${CMAKE_BINARY_DIR}/ProjectCVarOverrides.h" "#include \"${game_folder}/CVarOverrides.h\"")
+		endif()
+	else()
+		if(NOT project_cvar_overrides_h_content STREQUAL "")
+			file(WRITE "${CMAKE_BINARY_DIR}/ProjectCVarOverrides.h" "")
+		endif()
+	endif()
+
+	file(READ "${CMAKE_BINARY_DIR}/ProjectCVarWhitelist.h" project_cvar_whitelist_h_content)
+	if(EXISTS "${game_folder}/CVarWhitelist.h" AND NOT OPTION_RUNTIME_CVAR_OVERRIDES)
+		if(NOT project_cvar_whitelist_h_content STREQUAL "#include \"${game_folder}/CVarWhitelist.h\"")
+			file(WRITE "${CMAKE_BINARY_DIR}/ProjectCVarWhitelist.h" "#include \"${game_folder}/CVarWhitelist.h\"")
+		endif()
+	else()
+		if(NOT project_cvar_overrides_h_content STREQUAL "")
+			file(WRITE "${CMAKE_BINARY_DIR}/ProjectCVarWhitelist.h" "")
+		endif()
+	endif()
+
+	file(READ "${CMAKE_BINARY_DIR}/ProjectEngineDefineOverrides.h" project_engine_define_overrides_h_content)
+	if(EXISTS "${game_folder}/EngineDefineOverrides.h" AND NOT OPTION_RUNTIME_CVAR_OVERRIDES)
+		if(NOT project_engine_define_overrides_h_content STREQUAL "#include \"${game_folder}/EngineDefineOverrides.h\"")
+			file(WRITE "${CMAKE_BINARY_DIR}/ProjectEngineDefineOverrides.h" "#include \"${game_folder}/EngineDefineOverrides.h\"")
+		endif()
+	else()
+		if(NOT project_engine_define_overrides_h_content STREQUAL "")
+			file(WRITE "${CMAKE_BINARY_DIR}/ProjectEngineDefineOverrides.h" "")
+		endif()
+	endif()
+
+	if(EXISTS "${game_folder}/EngineDefineOverrides.h" AND OPTION_RUNTIME_CVAR_OVERRIDES)
+		MESSAGE(WARNING "Disabling project engine define overrides because OPTION_RUNTIME_CVAR_OVERRIDES was enabled!")
+	endif()
+
+	apply_ltcg_if_enabled()
+
 endfunction()
 
 function(CreateDynamicModule target)
@@ -481,13 +742,35 @@ function(CreateDynamicModule target)
 	apply_compile_settings()
 endfunction()
 
+#Use this for modules which link against the engine
 function(CryEngineStaticModule target)
 	prepare_project(${ARGN})
 	add_library(${THIS_PROJECT} STATIC ${${THIS_PROJECT}_SOURCES})
 	set(MODULE_FORCE_STATIC TRUE)
 	target_compile_definitions(${THIS_PROJECT} PRIVATE -D_LIB)
-	if (OPTION_STATIC_LINKING)
+	if (OPTION_STATIC_LINKING AND NOT MODULE_FORCE_SHARED)
 		target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_IS_MONOLITHIC_BUILD)
+	endif()
+	if(OPTION_DEDICATED_SERVER)
+		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DDEDICATED_SERVER")
+	endif()
+	if (MODULE_EDITOR_COMPILE_SETTINGS)
+		set_editor_module_flags()
+	endif()
+	apply_compile_settings()
+endfunction()
+
+#Use this for modules which link against the game
+function(CryGameStaticModule target)
+	prepare_project(${ARGN})
+	add_library(${THIS_PROJECT} STATIC ${${THIS_PROJECT}_SOURCES})
+	set(MODULE_FORCE_STATIC TRUE)
+	target_compile_definitions(${THIS_PROJECT} PRIVATE -D_LIB)
+	if (OPTION_STATIC_LINKING AND NOT MODULE_FORCE_SHARED AND NOT OPTION_STATIC_LINKING_WITH_GAME_AS_DLL)
+		target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_IS_MONOLITHIC_BUILD)
+	endif()
+	if(OPTION_DEDICATED_SERVER)
+		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DDEDICATED_SERVER")
 	endif()
 	if (MODULE_EDITOR_COMPILE_SETTINGS)
 		set_editor_module_flags()
@@ -501,25 +784,36 @@ function(CryLauncher target)
 		add_library(${target} SHARED ${${THIS_PROJECT}_SOURCES})
 		target_link_libraries(${THIS_PROJECT} PRIVATE m log c android)
 		configure_android_launcher(${target})		
-	elseif(WIN32)
+	elseif(WINDOWS)
 		add_executable(${THIS_PROJECT} WIN32 ${${THIS_PROJECT}_SOURCES})
 	else()
 		add_executable(${target} ${${THIS_PROJECT}_SOURCES})
 	endif()
 	if(ORBIS)
-		set_property(TARGET ${target} PROPERTY OUTPUT_NAME "GameLauncher.elf")	
+		set_property(TARGET ${target} PROPERTY OUTPUT_NAME "${OPTION_LAUNCHER_EXECUTABLE}.elf")	
 	elseif(NOT ANDROID)
-		set_property(TARGET ${THIS_PROJECT} PROPERTY OUTPUT_NAME "GameLauncher")	
+		set_property(TARGET ${THIS_PROJECT} PROPERTY OUTPUT_NAME "${OPTION_LAUNCHER_EXECUTABLE}")	
 	endif()
-
+	if (DURANGO)
+		# Set empty so the output directory will default to the solution directory
+		set_property(TARGET ${target} PROPERTY ARCHIVE_OUTPUT_DIRECTORY "")	
+	endif()
 	if(OPTION_STATIC_LINKING)
 		use_scaleform()
 		target_compile_definitions(${THIS_PROJECT} PRIVATE _LIB -DCRY_IS_MONOLITHIC_BUILD)
-		set(MODULES_LIST ${GAME_MODULES} ${MODULES})
+		if (WINDOWS)
+			set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS_PROFILE " /NODEFAULTLIB:libcpmt.lib")
+			set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS_RELEASE " /NODEFAULTLIB:libcpmt.lib")
+		endif()
+		if (OPTION_STATIC_LINKING_WITH_GAME_AS_DLL)
+			set(MODULES_LIST ${MODULES})
+		else()
+			set(MODULES_LIST ${GAME_MODULES} ${MODULES})
+		endif()
 		wrap_whole_archive(${target} WRAPPED_MODULES MODULES_LIST)
 		target_link_libraries(${THIS_PROJECT} PRIVATE ${WRAPPED_MODULES})
 	endif()
-	generate_rc_file(WindowsIcon.ico)
+	add_metadata(WindowsIcon.ico)
 	apply_compile_settings()	
 
 	if(NOT ANDROID)
@@ -531,30 +825,154 @@ endfunction()
 
 function(CryDedicatedServer target)
 	prepare_project(${ARGN})
-	if(WIN32)
+	if(WINDOWS)
 		add_executable(${THIS_PROJECT} WIN32 ${${THIS_PROJECT}_SOURCES})
+		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:WINDOWS")
 	else()
 		add_executable(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
 	endif()
 	set_property(TARGET ${THIS_PROJECT} PROPERTY OUTPUT_NAME "Game_Server")
-	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:WINDOWS")	
-	generate_rc_file(WindowsServerIcon.ico)
+	add_metadata(WindowsServerIcon.ico)
 
 	if(OPTION_STATIC_LINKING)
 		use_scaleform()
 		target_compile_definitions(${THIS_PROJECT} PRIVATE _LIB -DCRY_IS_MONOLITHIC_BUILD)
+		if (WINDOWS)
+			set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS_PROFILE " /NODEFAULTLIB:libcpmt.lib")
+			set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS_RELEASE " /NODEFAULTLIB:libcpmt.lib")
+		endif()
 		set(MODULES_LIST ${GAME_MODULES} ${MODULES})
 		wrap_whole_archive(${target} WRAPPED_MODULES MODULES_LIST)
 		target_link_libraries(${THIS_PROJECT} PRIVATE ${WRAPPED_MODULES})
 	endif()
+
+	if(OPTION_DEDICATED_SERVER) 
+		target_compile_definitions( ${THIS_PROJECT} PRIVATE "-DDEDICATED_SERVER") 
+	endif() 
+	
 	apply_compile_settings()	
 endfunction()
 
 function(CryConsoleApplication target)
 	prepare_project(${ARGN})
 	add_executable(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
-	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
+	if(WINDOWS)
+		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
+	endif()
 	apply_compile_settings()	
+endfunction()
+
+function(CryUnitTestSuite target)
+	set(TEST_MODULES ${TEST_MODULES} ${target} CACHE INTERNAL "List of test modules being built" FORCE)	
+
+	if(ORBIS)
+		prepare_project(${ARGN})
+		add_library(${THIS_PROJECT} STATIC ${${THIS_PROJECT}_SOURCES})
+		set(MODULE_FORCE_STATIC TRUE)
+		target_compile_options(${THIS_PROJECT} PRIVATE -Wno-inconsistent-missing-override) #For gmock
+		target_compile_definitions(${THIS_PROJECT} PRIVATE -D_LIB)
+		if (OPTION_STATIC_LINKING)
+			target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_IS_MONOLITHIC_BUILD)
+		endif()
+		apply_compile_settings()
+	else()
+		add_sources("NoUberFile" SOURCE_GROUP "Imported" 
+			"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/UnitTest.h"
+			"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/Printer.cpp"
+		)
+
+		if (WINDOWS OR LINUX)
+			add_sources("NoUberFile" SOURCE_GROUP "Imported" 
+				"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/Main.cpp"
+			)
+		elseif (DURANGO)
+			set(temp_old_output_directory ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+			set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin/durango_test/${target}")
+			set(LAYOUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin/durango_test/${target}_layout/")
+			file(GLOB RESOURCE_COPY_WILDCARD "${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Resources/*.*")
+			file(COPY ${RESOURCE_COPY_WILDCARD} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+			add_sources("NoUberFile" SOURCE_GROUP "Imported" 
+				"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/Main_Durango.cpp"
+				"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/DurangoDebugHelper.h"
+			)
+			add_sources("NoUberFile" SOURCE_GROUP "Generated" "${CMAKE_CURRENT_BINARY_DIR}/Package.appxmanifest")
+
+			configure_durango_game(
+				"GENERATE_DIRECTORY" "${CMAKE_CURRENT_BINARY_DIR}"
+				"app_id" "${target}.app"
+				"package_name" "${target}"
+				"executable_name" "${target}.exe"
+				"display_name" "${target}"
+				"publisher_name" "Crytek"
+				"description" "CRYENGINE ${target}"
+				"foreground_text" "light"
+				"background_color" "#6495ED"
+				"version" "1.0.0.0"
+				"logo" "DurangoLogo.png"
+				"small_logo" "DurangoSmallLogo.png"
+				"wide_logo" "DurangoWideLogo.png"
+				"splash_screen" "DurangoSplashScreen.png"
+				"store_logo" "DurangoStoreLogo.png"
+			)
+		endif()
+
+		prepare_project(${ARGN})
+		add_executable(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
+		if(WINDOWS)
+			set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
+		endif()
+		apply_compile_settings()	
+
+		if ((OPTION_STATIC_LINKING OR MODULE_FORCE_STATIC) AND NOT MODULE_FORCE_SHARED)
+			target_compile_definitions(${THIS_PROJECT} PRIVATE _LIB -DCRY_IS_MONOLITHIC_BUILD)
+		endif()
+		
+		if (DURANGO)
+			target_compile_options(${THIS_PROJECT} PRIVATE /EHsc /ZW)
+			set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${temp_old_output_directory})
+			if (LAYOUT_DIRECTORY)
+				file(TO_NATIVE_PATH "${LAYOUT_DIRECTORY}" NATIVE_LAYOUTDIR)
+				add_custom_command(TARGET ${THIS_PROJECT}	PRE_BUILD COMMAND if exist "\"${NATIVE_LAYOUTDIR}\"" rmdir /s /q "\"${NATIVE_LAYOUTDIR}\"")
+			endif()
+		endif()
+
+        if (LINUX)
+        	target_link_libraries( ${THIS_PROJECT} PRIVATE dl pthread)
+        endif()
+	endif()
+	target_include_directories(
+		${THIS_PROJECT} PUBLIC 
+		"${CRYENGINE_DIR}/Code/SDKs/googletest_CE_Support/googletest/include"
+		"${CRYENGINE_DIR}/Code/SDKs/googletest_CE_Support/googlemock/include"
+		"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common"
+	)
+	target_link_libraries(${THIS_PROJECT} PUBLIC gtest gmock)
+endfunction()
+
+function(CryEditorPluginUnitTestSuite target)
+	add_sources("NoUberFile" SOURCE_GROUP "Imported" 
+		"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/UnitTest.h"
+		"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/Main.cpp"
+		"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common/Printer.cpp"
+	)
+
+	prepare_project(${ARGN})
+	add_executable(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
+	if(WIN32)
+		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
+	endif()
+	apply_compile_settings()
+
+	target_include_directories(
+		${THIS_PROJECT} PUBLIC 
+		"${CRYENGINE_DIR}/Code/SDKs/googletest_CE_Support/googletest/include"
+		"${CRYENGINE_DIR}/Code/SDKs/googletest_CE_Support/googlemock/include"
+		"${CRYENGINE_DIR}/Code/CryEngine/UnitTests/Common"
+	)
+	target_link_libraries(${THIS_PROJECT} PUBLIC gtest gmock)
+	set_editor_module_flags()
+	target_compile_definitions(${THIS_PROJECT} PRIVATE _LAUNCHER -DEDITOR_PLUGIN_UNIT_TEST -DSANDBOX_IMPORTS -DEDITOR_COMMON_IMPORTS -DNOT_USE_CRY_MEMORY_MANAGER)
+	target_link_libraries(${THIS_PROJECT} PRIVATE EditorCommon)
 endfunction()
 
 function(CryWindowsApplication target)
@@ -593,30 +1011,32 @@ macro(set_editor_module_flags)
 		-DCRY_ENABLE_RC_HELPER
 		-DIS_EDITOR_BUILD
 		-DQT_FORCE_ASSERT
-		-DUSE_PYTHON_SCRIPTING 
 		-DNO_WARN_MBCS_MFC_DEPRECATION
 	)
 	if(NOT MODULE_DISABLE_MFC AND NOT MODULE_FORCE_STATIC)
 		target_compile_definitions( ${THIS_PROJECT} PRIVATE -D_AFXDLL)
 	endif()
-	target_link_libraries( ${THIS_PROJECT} PRIVATE BoostPython python27)
+	target_link_libraries(${THIS_PROJECT} PRIVATE BoostPython Python)
+
 	use_qt()
 	target_compile_options(${THIS_PROJECT} PRIVATE /EHsc /GR /bigobj /wd4251 /wd4275)
 	target_include_directories(${THIS_PROJECT} PRIVATE "${CRYENGINE_DIR}/Code/Sandbox/Libs/CryQt")
 	target_link_libraries(${THIS_PROJECT} PRIVATE CryQt)
+	set_property(TARGET ${THIS_PROJECT} PROPERTY EXCLUDE_FROM_DEFAULT_BUILD_RELEASE TRUE)
+	set_property(TARGET ${THIS_PROJECT} PROPERTY EDITOR_MODULE_FLAGS TRUE)
 endmacro()
 
 function(CryEditor target)
 	prepare_project(${ARGN})
-	if(WIN32)
+	if(WINDOWS)
 		add_executable(${THIS_PROJECT} WIN32 ${${THIS_PROJECT}_SOURCES})
 	else()
 		add_executable(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
 	endif()
 	set_editor_module_flags()
-	generate_rc_file()
+	add_metadata()
 	target_compile_options(${THIS_PROJECT} PRIVATE /Zm200)
-	target_compile_definitions(${THIS_PROJECT} PRIVATE -DSANDBOX_EXPORTS -DPLUGIN_IMPORTS -DEDITOR_COMMON_IMPORTS)
+	target_compile_definitions(${THIS_PROJECT} PRIVATE -DSANDBOX_EXPORTS -DEDITOR_COMMON_IMPORTS)
 	target_link_libraries(${THIS_PROJECT} PRIVATE EditorCommon)
 	set_property(TARGET ${THIS_PROJECT} PROPERTY ENABLE_EXPORTS TRUE)
 	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:WINDOWS")
@@ -628,7 +1048,7 @@ function(CryEditorPlugin target)
 	add_library(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
 	set_editor_module_flags()
 	target_compile_options(${THIS_PROJECT} PRIVATE /Zm200)
-	target_compile_definitions(${THIS_PROJECT} PRIVATE -DSANDBOX_IMPORTS -DPLUGIN_IMPORTS -DEDITOR_COMMON_IMPORTS -DNOT_USE_CRY_MEMORY_MANAGER)
+	target_compile_definitions(${THIS_PROJECT} PRIVATE -DSANDBOX_IMPORTS -DEDITOR_COMMON_IMPORTS -DNOT_USE_CRY_MEMORY_MANAGER)
 	set_property(TARGET ${THIS_PROJECT} PROPERTY LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/EditorPlugins")
 	set_property(TARGET ${THIS_PROJECT} PROPERTY RUNTIME_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/EditorPlugins")
 	target_link_libraries(${THIS_PROJECT} PRIVATE EditorCommon)
@@ -675,10 +1095,10 @@ function(CryPipelineModule target)
 	set_rc_flags()
 	set_property(TARGET ${THIS_PROJECT} PROPERTY LIBRARY_OUTPUT_DIRECTORY Tools/rc)
 	set_property(TARGET ${THIS_PROJECT} PROPERTY RUNTIME_OUTPUT_DIRECTORY Tools/rc)
-	if(WIN32)
+	if(WINDOWS)
 		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
 	endif()
-	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS_DEBUG /NODEFAULTLIB:libcmt.lib /NODEFAULTLIB:msvcprtd.lib)
+	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS_DEBUG " /NODEFAULTLIB:libcmt.lib /NODEFAULTLIB:msvcprtd.lib")
 	apply_compile_settings()	
 endfunction()
 
@@ -707,122 +1127,6 @@ macro(use_qt)
 	use_qt_modules(${QT_MODULES})
 endmacro()
 
-macro(process_mono_swig output_module platformAssembly languageVersion)
-	set(CMAKE_MODULE_LINKER_FLAGS_PROFILE ${CMAKE_SHARED_LINKER_FLAGS_PROFILE})
-	set(swig_inputs)
-	set(swig_globals)
-	foreach(sourcefile ${SOURCES})
-		if ("${sourcefile}" MATCHES ".*\\.\\i$")
-			set(swig_inputs ${swig_inputs} "${sourcefile}")
-		endif()
-		if ("${sourcefile}" MATCHES ".*\\.\\swig$")
-			set(swig_globals ${swig_globals} "${sourcefile}")
-		endif()
-	endforeach()
-
-	set(SWIG_EXECUTABLE "${SDK_DIR}/swig/swig")
-
-	if (NOT PRODUCT_NAME)
-		set(PRODUCT_NAME ${THIS_PROJECT})
-	endif()
-	file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${output_module}_meta.cs"
-		"using System.Reflection;\n"
-		"using System.Runtime.CompilerServices;\n"
-		"[assembly: InternalsVisibleTo(\"CryEngine.Core\")]\n"
-		"[assembly: AssemblyProduct(\"${PRODUCT_NAME}\")]\n"
-		"[assembly: AssemblyTitle(\"${PRODUCT_NAME}\")]\n"
-		"[assembly: AssemblyDescription(\"${PRODUCT_NAME}\")]\n"
-		"[assembly: AssemblyVersion(\"${METADATA_VERSION}\")]\n"
-		"[assembly: AssemblyCompany(\"${METADATA_COMPANY}\")]\n"
-		"[assembly: AssemblyCopyright(\"${METADATA_COPYRIGHT}\")]\n"
-		)
-
-	set(mono_inputs "${CMAKE_CURRENT_BINARY_DIR}/${output_module}_meta.cs")
-
-	foreach(f ${swig_inputs})
-		string(LENGTH "${f}" flen)
-		math(EXPR flen ${flen}-2)
-		string(SUBSTRING "${f}" 0 ${flen} basename)
-		file(RELATIVE_PATH bindir "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
-		set(basename "${basename}")
-		set(f_cpp "${basename}.cpp")
-		set(f_cs "${basename}.cs")
-		set(f_h "${basename}.h")
-		if(WIN64)
-			set(defs -D_WIN32 -D_WIN64)
-		elseif(WIN32)
-			set(defs -D_WIN32)
-		else()
-			message(ERROR "Mono not supported on this platform")
-		endif()
-
-		get_target_property(target_defs ${THIS_PROJECT} COMPILE_DEFINITIONS)
-		foreach(d ${target_defs})
-			set(defs ${defs} -D${d})
-		endforeach()
-		set(defs ${defs} -D_MT -D_DLL -D_USRDLL)
-
-		get_filename_component(f_cs_dir "${f_cs}" DIRECTORY)
-		get_filename_component(f_cs_name "${f_cs}" NAME)
-
-		# Detect dependencies
-		execute_process(
-			COMMAND "${SWIG_EXECUTABLE}" -MM ${defs} -csharp "${f}"
-			OUTPUT_VARIABLE swig_deps
-			WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-		)
-		string(REGEX MATCHALL "\n  [^ ][^ ][^ :]+" temp ${swig_deps})
-		set(swig_deps)
-		foreach(t ${temp})
-			string(STRIP "${t}" t)
-			set(swig_deps ${swig_deps} "${t}")
-		endforeach()
-
-		set(defs ${defs} -D_$<UPPER_CASE:$<CONFIG>> -D$<UPPER_CASE:$<CONFIG>>)
-
-		set(mono_inputs ${mono_inputs} "${f_cs}")
-		add_custom_command(
-			OUTPUT "${f_cpp}" "${f_h}" "${f_cs}"
-			COMMAND "${SWIG_EXECUTABLE}" -c++ ${defs} -DSWIG_CSHARP_NO_IMCLASS_STATIC_CONSTRUCTOR ${secondary_defs} -csharp -o "${bindir}/${f_cpp}" -outdir "${bindir}/${f_cs_dir}" -outfile "${f_cs_name}" -namespace ${output_module} -pch-file "\\\"StdAfx.h\\\"" -fno-include-guards -dllimport ${THIS_PROJECT} "${f}"
-			MAIN_DEPENDENCY "${f}"
-			WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-			DEPENDS ${swig_deps}
-		)
-		set_property(DIRECTORY "${CRYENGINE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${swig_deps} "${CMAKE_CURRENT_SOURCE_DIR}/${f}")
-		set(secondary_defs -DSWIG_CXX_EXCLUDE_SWIG_INTERFACE_FUNCTIONS -DSWIG_CSHARP_EXCLUDE_STRING_HELPER -DSWIG_CSHARP_EXCLUDE_EXCEPTION_HELPER)
-		target_sources(${THIS_PROJECT} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/${f_cpp}" "${CMAKE_CURRENT_BINARY_DIR}/${f_h}")
-		EXCLUDE_FILE_FROM_MSVC_PRECOMPILED_HEADER("${CMAKE_CURRENT_BINARY_DIR}/${f_cpp}")
-		source_group("Generated" FILES "${CMAKE_CURRENT_BINARY_DIR}/${f_cpp}" "${CMAKE_CURRENT_BINARY_DIR}/${f_h}")
-		set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/${f_h}" PROPERTIES HEADER_FILE_ONLY true GENERATED true)
-	endforeach()
-
-	set(mono_path "${SDK_DIR}/Mono/bin/mcs")
-	set(mono_lib_path "${SDK_DIR}/Mono/lib/mono")
-
-	#TODO: Metadata
-	add_custom_command(
-		TARGET ${THIS_PROJECT} PRE_LINK
-		COMMAND "${mono_path}" -target:library -langversion:${languageVersion} -platform:${platformAssembly} -optimize -g -L "${mono_lib_path}" ${mono_inputs} "-out:${OUTPUT_DIRECTORY}/${output_module}.dll"
-		DEPENDS ${mono_inputs}
-		WORKING_DIRECTORY "${CMAKE_CURRENT_BIANRY_DIR}"
-	)
-
-endmacro()
-
-macro(create_mono_compiler_settings)
-	set(MONO_LANGUAGE_VERSION 6)
-	if("${BUILD_PLATFORM}" STREQUAL "Win32")
-		set(MONO_CPU_PLATFORM x86)
-		set(MONO_LIB_PATH "${SDK_DIR}/Mono/lib/mono/x86")
-		set(MONO_PREPROCESSOR_DEFINE WIN32)
-	elseif("${BUILD_PLATFORM}" STREQUAL "Win64")
-		set(MONO_CPU_PLATFORM anycpu)
-		set(MONO_LIB_PATH "${SDK_DIR}/Mono/lib/mono/x64")
-		set(MONO_PREPROCESSOR_DEFINE WIN64)
-	endif()
-	set(MONO_PREPROCESSOR_DEFINE ${MONO_PREPROCESSOR_DEFINE}$<SEMICOLON>$<UPPER_CASE:$<CONFIG>>)
-endmacro()
-
 macro(remove_files_from_list filelist filepattern)
 	#message(STATUS " remove_files_from_list ${filelist} ${filepattern}")
 	set(FilesToRemove "")
@@ -837,8 +1141,15 @@ macro(remove_files_from_list filelist filepattern)
 	endforeach() 
 endmacro()
 
-macro(generate_rc_file)
-	if (WIN32 OR WIN64)
+# For Windows, an argument may be provided to specify the location of an icon for the executable
+function(add_metadata)
+	if (WINDOWS)
+		get_target_property(project_type ${THIS_PROJECT} TYPE)
+		set(valid_types EXECUTABLE MODULE_LIBRARY SHARED_LIBRARY)
+		if(NOT ${project_type} IN_LIST valid_types)
+			return()
+		endif()
+		
 		set(icon_name ${ARGN})
 		if (NOT PRODUCT_NAME)
 			set(PRODUCT_NAME ${THIS_PROJECT})
@@ -984,10 +1295,21 @@ macro(generate_rc_file)
 			"/////////////////////////////////////////////////////////////////////////////\n"
 			"#endif    // not APSTUDIO_INVOKED\n"
 		)
-	target_sources(${THIS_PROJECT} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/${THIS_PROJECT}.autogen.rc")
-	source_group("Resource Files" FILES "${CMAKE_CURRENT_BINARY_DIR}/${THIS_PROJECT}.autogen.rc")
+		target_sources(${THIS_PROJECT} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/${THIS_PROJECT}.autogen.rc")
+		source_group("Resource Files" FILES "${CMAKE_CURRENT_BINARY_DIR}/${THIS_PROJECT}.autogen.rc")
+	elseif(METADATA_VERSION)
+		string(REPLACE "." ";" VERSION_LIST ${METADATA_VERSION}) 
+		list(GET VERSION_LIST 0 VERSION_MAJOR) 
+		list(GET VERSION_LIST 1 VERSION_MINOR) 
+		list(GET VERSION_LIST 2 VERSION_REVISION) 
+		list(GET VERSION_LIST 3 VERSION_BUILD) 
+
+		target_compile_definitions(${THIS_PROJECT} PRIVATE EXE_VERSION_INFO_0=${VERSION_MAJOR}) 
+		target_compile_definitions(${THIS_PROJECT} PRIVATE EXE_VERSION_INFO_1=${VERSION_MINOR}) 
+		target_compile_definitions(${THIS_PROJECT} PRIVATE EXE_VERSION_INFO_2=${VERSION_REVISION}) 
+		target_compile_definitions(${THIS_PROJECT} PRIVATE EXE_VERSION_INFO_3=${VERSION_BUILD})
 	endif()
-endmacro()
+endfunction()
 
 macro(use_scaleform)
 	if (OPTION_SCALEFORMHELPER)
@@ -997,15 +1319,12 @@ macro(use_scaleform)
 			target_compile_definitions(${THIS_PROJECT} PRIVATE -DINCLUDE_SCALEFORM_SDK $<$<CONFIG:Debug>:GFC_BUILD_DEBUG>)
 			set(SCALEFORM_LIB_FOLDER "${SDK_DIR}/Scaleform/Lib")
 			set(SCALEFORM_HAS_SHIPPING_LIB TRUE)
-			if (WIN64)
+			if (WINDOWS)
 				set(SCALEFORM_LIB_FOLDER "${SCALEFORM_LIB_FOLDER}/${MSVC_LIB_PREFIX}/Win64" )
-				set(SCALEFORM_LIBS libgfx)
-			elseif(WIN32)
-				set(SCALEFORM_LIB_FOLDER "${SCALEFORM_LIB_FOLDER}/${MSVC_LIB_PREFIX}/Win32" )
 				set(SCALEFORM_LIBS libgfx)
 			elseif(DURANGO)
 				set(SCALEFORM_LIB_FOLDER "${SCALEFORM_LIB_FOLDER}/${MSVC_LIB_PREFIX}/Durango" )
-				set(SCALEFORM_LIBS libgfx)
+				set(SCALEFORM_LIBS legacy_stdio_definitions libgfx)
 			elseif(LINUX)
 				set(SCALEFORM_LIB_FOLDER "${SCALEFORM_LIB_FOLDER}/linux")
 				set(SCALEFORM_HAS_SHIPPING_LIB FALSE)
@@ -1014,7 +1333,7 @@ macro(use_scaleform)
 				set(SCALEFORM_LIB_FOLDER "${SCALEFORM_LIB_FOLDER}/ORBIS")
 				set(SCALEFORM_LIBS gfx gfx_video)
 			elseif(ANDROID)
-				set(SCALEFORM_LIB_FOLDER "${SCALEFORM_LIB_FOLDER}/android-${CMAKE_ANDROID_ARCH}")
+				set(SCALEFORM_LIB_FOLDER "${SCALEFORM_LIB_FOLDER}/android-${CMAKE_ANDROID_ARCH_ABI}")
 				set(SCALEFORM_HAS_SHIPPING_LIB FALSE)
 				set(SCALEFORM_LIBS gfx)
 			elseif(APPLE)
@@ -1045,15 +1364,7 @@ macro(use_scaleform)
 endmacro()
 
 macro(use_xt)
-	if (MSVC_VERSION GREATER 1900) # Visual Studio > 2015
-		set(XT_VERSION vc14)
-	elseif (MSVC_VERSION EQUAL 1900) # Visual Studio 2015
-		set(XT_VERSION vc14)
-	elseif (MSVC_VERSION EQUAL 1800) # Visual Studio 2013
-		set(XT_VERSION vc12)
-	elseif (MSVC_VERSION EQUAL 1700) # Visual Studio 2012
-		set(XT_VERSION vc11)
-	endif()
+	set(XT_VERSION vc14)
 	target_include_directories( ${THIS_PROJECT} PRIVATE "${SDK_DIR}/XT_13_4/Include" )
 	set_libpath_flag()
 	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " ${LIBPATH_FLAG}\"${SDK_DIR}/XT_13_4/lib_${XT_VERSION}\"")
@@ -1088,17 +1399,7 @@ function(add_subdirectories)
 endfunction()
 
 function(set_visual_studio_debugger_command TARGET_NAME EXE_PATH CMD_LINE)
-	if (WIN32 AND NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}.vcxproj.user")
-		#Configure default Visual Studio debugger settings
-		file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${TARGET_NAME}.vcxproj.user"
-			"<?xml version=\"1.0\" encoding=\"utf-8\"?>
-			<Project ToolsVersion=\"14.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">
-				<PropertyGroup>
-					<LocalDebuggerCommand>${EXE_PATH}</LocalDebuggerCommand>
-					<LocalDebuggerCommandArguments>${CMD_LINE}</LocalDebuggerCommandArguments>
-					<DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
-				</PropertyGroup>
-			</Project>"
-		)
-	endif()
+	set_target_properties(${TARGET_NAME}
+		PROPERTIES VS_DEBUGGER_COMMAND ${EXE_PATH}
+		VS_DEBUGGER_COMMAND_ARGUMENTS ${CMD_LINE})
 endfunction()

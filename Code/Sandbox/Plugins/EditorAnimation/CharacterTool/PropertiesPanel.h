@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,11 +9,11 @@
 #include <IEditor.h>
 #include <CrySerialization/Forward.h>
 
-#include "../EditorCommon/Explorer/ExplorerDataProvider.h"
+#include "Explorer/ExplorerDataProvider.h"
 
 class QDockWidget;
 class QToolBar;
-class QPropertyTree;
+class QPropertyTreeLegacy;
 
 namespace Explorer
 {
@@ -64,9 +64,10 @@ class PropertiesPanel : public QWidget, public IEditorNotifyListener
 public:
 	PropertiesPanel(QWidget* parent, System* system);
 	~PropertiesPanel();
-	QPropertyTree* PropertyTree()                     { return m_propertyTree; }
+	QPropertyTreeLegacy* PropertyTree()                     { return m_propertyTree; }
 	void           Serialize(Serialization::IArchive& ar);
 	void           SetDockWidget(QDockWidget* widget) {}
+	void           OnChanged()                        { OnPropertyTreeChanged(); }
 
 protected:
 	void OnEditorNotifyEvent(EEditorNotifyEvent event) override;
@@ -124,8 +125,8 @@ private:
 	QMenu*                    m_undoMenu;
 
 	QSplitter*                m_splitter;
-	QPropertyTree*            m_propertyTree;
-	QPropertyTree*            m_detailTree;
+	QPropertyTreeLegacy*            m_propertyTree;
+	QPropertyTreeLegacy*            m_detailTree;
 	QAction*                  m_settingActions[NUM_OUTLINE_MODES];
 
 	System*                   m_system;

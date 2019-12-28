@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "MonoRuntime.h"
@@ -9,6 +9,7 @@
 #include "Wrappers/MonoClass.h"
 #include "Wrappers/MonoObject.h"
 #include "Wrappers/MonoMethod.h"
+#include "Wrappers/MonoException.h"
 
 #include "ManagedPlugin.h"
 
@@ -19,10 +20,15 @@
 #include <CrySystem/ILog.h>
 #include <CrySystem/IProjectManager.h>
 #include <CryAISystem/IAISystem.h>
-#include <CrySystem/IConsole.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #include "NativeToManagedInterfaces/IMonoNativeToManagedInterface.h"
 #include <CryInput/IHardwareMouse.h>
+#include <CrySystem/ICmdLine.h>
+
+#if CRY_PLATFORM_WINDOWS
+	#include <Shlwapi.h>
+#endif
 
 // Must be included only once in DLL module.
 #include <CryCore/Platform/platform_impl.inl>
@@ -36,10 +42,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 
 CRYREGISTER_SINGLETON_CLASS(CMonoRuntime)
 
-#if CRY_PLATFORM_WINDOWS
-	#pragma comment(lib, "mono-2.0.lib")
-#endif
-
 static const char* s_monoLogLevels[] =
 {
 	NULL,
@@ -48,8 +50,7 @@ static const char* s_monoLogLevels[] =
 	"warning",
 	"message",
 	"info",
-	"debug"
-};
+	"debug" };
 
 static IMiniLog::ELogType s_monoToEngineLevels[] =
 {
@@ -59,20 +60,18 @@ static IMiniLog::ELogType s_monoToEngineLevels[] =
 	IMiniLog::eWarning,
 	IMiniLog::eMessage,
 	IMiniLog::eMessage,
-	IMiniLog::eComment
-};
+	IMiniLog::eComment };
 
-void OnReloadRequested(IConsoleCmdArgs *pArgs)
+void OnReloadRequested(IConsoleCmdArgs* pArgs)
 {
 	GetMonoRuntime()->ReloadPluginDomain();
 }
 
 CMonoRuntime::CMonoRuntime()
-	: m_pLibCommon(nullptr)
-	, m_pLibCore(nullptr)
-	, m_pRootDomain(nullptr)
+	: m_pRootDomain(nullptr)
 	, m_pPluginDomain(nullptr)
 	, m_listeners(5)
+	, m_compileListeners(1)
 {
 }
 
@@ -81,7 +80,7 @@ CMonoRuntime::~CMonoRuntime()
 	if (gEnv)
 	{
 		gEnv->pMonoRuntime = nullptr;
-		
+
 		if (gEnv->pConsole)
 		{
 			gEnv->pConsole->UnregisterListener(this);
@@ -91,20 +90,25 @@ CMonoRuntime::~CMonoRuntime()
 		{
 			gEnv->pSystem->GetISystemEventDispatcher()->RemoveListener(this);
 		}
-
 	}
 }
 
 bool CMonoRuntime::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
 {
-	CryLog("[Mono] Initialize Mono Runtime . . . ");
-
 	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(this, "CMonoRuntime");
 	gEnv->pMonoRuntime = this;
+
+	return true;
+}
+
+bool CMonoRuntime::InitializeRuntime()
+{
+	CryLog("Initializing .NET/Mono...");
 
 #ifndef _RELEASE
 	char szSoftDebuggerOption[256];
 	int softDebuggerPort = 17615;
+	string szSuspend = "n";
 
 	const ICmdLineArg* pDebugPortArg = gEnv->pSystem->GetICmdLine()->FindArg(ECmdLineArgType::eCLAT_Pre, "monoDebuggerPort");
 	if (pDebugPortArg != nullptr)
@@ -112,16 +116,23 @@ bool CMonoRuntime::Initialize(SSystemGlobalEnvironment& env, const SSystemInitPa
 		softDebuggerPort = pDebugPortArg->GetIValue();
 	}
 
-	sprintf_s(szSoftDebuggerOption, "--debugger-agent=transport=dt_socket,address=127.0.0.1:%d,embedding=1,server=y,suspend=n", softDebuggerPort);
+	const ICmdLineArg* pSuspendArg = gEnv->pSystem->GetICmdLine()->FindArg(ECmdLineArgType::eCLAT_Pre, "monoSuspend");
+	if (pSuspendArg != nullptr)
+	{
+		if (pSuspendArg->GetIValue() == 1)
+		{
+			szSuspend = "y";
+		}
+	}
+	sprintf_s(szSoftDebuggerOption, "--debugger-agent=transport=dt_socket,address=127.0.0.1:%d,embedding=1,server=y,suspend=%s", softDebuggerPort, szSuspend);
 
 	MonoInternals::mono_debug_init(MonoInternals::MONO_DEBUG_FORMAT_MONO);
-	char* options[] = {
+	const char* options[] = {
 		"--soft-breakpoints",
-		szSoftDebuggerOption
-	};
-	MonoInternals::mono_jit_parse_options(sizeof(options) / sizeof(char*), options);
+		szSoftDebuggerOption };
+	MonoInternals::mono_jit_parse_options(sizeof(options) / sizeof(char*), const_cast<char**>(options));
 
-	gEnv->pLog->LogAlways("[Mono] Debugger server active on port: %d", softDebuggerPort);
+	gEnv->pLog->LogAlways("[Mono] Debugger server active on port: %d and suspended is set to %s", softDebuggerPort, szSuspend);
 #endif
 
 	// Find the Mono configuration directory
@@ -131,15 +142,13 @@ bool CMonoRuntime::Initialize(SSystemGlobalEnvironment& env, const SSystemInitPa
 	const char* szMonoDirectoryParent = "bin\\common";
 
 	char sMonoLib[_MAX_PATH];
-	sprintf_s(sMonoLib, "%s\\%s\\Mono\\lib", engineRoot, szMonoDirectoryParent);
+	sprintf_s(sMonoLib, "%s%s\\Mono\\lib", engineRoot, szMonoDirectoryParent);
 	char sMonoEtc[_MAX_PATH];
-	sprintf_s(sMonoEtc, "%s\\%s\\Mono\\etc", engineRoot, szMonoDirectoryParent);
+	sprintf_s(sMonoEtc, "%s%s\\Mono\\etc", engineRoot, szMonoDirectoryParent);
 
-	if (!gEnv->pCryPak->IsFileExist(sMonoLib, ICryPak::eFileLocation_OnDisk) || !gEnv->pCryPak->IsFileExist(sMonoEtc, ICryPak::eFileLocation_OnDisk))
+	if (!gEnv->pCryPak->IsFolder(sMonoLib) || !gEnv->pCryPak->IsFolder(sMonoEtc))
 	{
-		CryLogAlways("Failed to initialize Mono runtime, Mono directory was not found or incomplete in %s directory", szMonoDirectoryParent);
-		delete this;
-
+		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_ERROR, "Failed to initialize Mono runtime, Mono directory was not found or incomplete in %s directory", szMonoDirectoryParent);
 		return false;
 	}
 
@@ -152,9 +161,9 @@ bool CMonoRuntime::Initialize(SSystemGlobalEnvironment& env, const SSystemInitPa
 	MonoInternals::mono_trace_set_printerr_handler(MonoPrintErrorCallback);
 
 	m_pRootDomain = std::make_shared<CRootMonoDomain>();
-	m_pRootDomain->Initialize();
+	m_domains.emplace_back(m_pRootDomain);
 
-	m_domainLookupMap.emplace(std::make_pair(m_pRootDomain->GetMonoDomain(), m_pRootDomain));
+	m_pRootDomain->Initialize();
 
 	RegisterInternalInterfaces();
 
@@ -162,32 +171,72 @@ bool CMonoRuntime::Initialize(SSystemGlobalEnvironment& env, const SSystemInitPa
 
 	REGISTER_COMMAND("mono_reload", OnReloadRequested, VF_NULL, "Used to reload all mono plug-ins");
 
-	CryLog("[Mono] Initialization done.");
+	CryLog(".NET/Mono Initialization done.");
 	return true;
 }
 
 void CMonoRuntime::Shutdown()
 {
-	if (m_pLibCore != nullptr)
+	for (std::weak_ptr<IManagedPlugin> pPlugin : m_plugins)
 	{
-		// Get the equivalent of gEnv
-		std::shared_ptr<CMonoClass> pEngineClass = m_pLibCore->GetTemporaryClass("CryEngine", "Engine");
-		CRY_ASSERT(pEngineClass != nullptr);
-
-		// Call the static Shutdown function
-		pEngineClass->FindMethod("OnEngineShutdown")->Invoke();
+		if (std::shared_ptr<IManagedPlugin> pManagedPlugin = pPlugin.lock())
+		{
+			pManagedPlugin->Shutdown();
+		}
 	}
 
 	// Root domain HAS to be deleted last, its destructor shuts down the entire runtime!
-	m_domainLookupMap.clear();
+	m_domains.clear();
 	m_pRootDomain.reset();
+
+	m_pAssetsPlugin.reset();
 
 	m_nodeCreators.clear();
 }
 
-std::shared_ptr<ICryPlugin> CMonoRuntime::LoadBinary(const char* szBinaryPath)
+std::shared_ptr<Cry::IEnginePlugin> CMonoRuntime::LoadBinary(const char* szBinaryPath)
 {
-	std::shared_ptr<CManagedPlugin> pPlugin = std::make_shared<CManagedPlugin>(szBinaryPath);
+	// Mono runtime is only initialized at demand when there are C# plug-ins available
+	if (!m_initialized)
+	{
+		m_initialized = InitializeRuntime();
+		if (!m_initialized)
+		{
+			return nullptr;
+		}
+	}
+
+	string binaryPath;
+
+#if CRY_PLATFORM_DURANGO
+	if (true)
+#elif CRY_PLATFORM_WINAPI
+	if (PathIsRelative(szBinaryPath))
+#elif CRY_PLATFORM_POSIX
+	if (szBinaryPath[0] != '/')
+#endif
+	{
+		// First search in the project directory
+		binaryPath = PathUtil::Make(gEnv->pSystem->GetIProjectManager()->GetCurrentProjectDirectoryAbsolute(), szBinaryPath);
+		if (!gEnv->pCryPak->IsFileExist(binaryPath.c_str()))
+		{
+			// File did not exist in the project directory, try the engine binary directory
+			char szEngineDirectoryBuffer[_MAX_PATH];
+			CryGetExecutableFolder(CRY_ARRAY_COUNT(szEngineDirectoryBuffer), szEngineDirectoryBuffer);
+
+			binaryPath = PathUtil::Make(szEngineDirectoryBuffer, szBinaryPath);
+			if (!gEnv->pCryPak->IsFileExist(binaryPath.c_str()))
+			{
+				binaryPath = szBinaryPath;
+			}
+		}
+	}
+	else
+	{
+		binaryPath = szBinaryPath;
+	}
+
+	std::shared_ptr<CManagedPlugin> pPlugin = std::make_shared<CManagedPlugin>(binaryPath);
 	m_plugins.emplace_back(pPlugin);
 	return pPlugin;
 }
@@ -211,7 +260,7 @@ void CMonoRuntime::MonoLogCallback(const char* szLogDomain, const char* szLogLev
 				break;
 			}
 
-	gEnv->pLog->LogWithType(engineLvl, "[Mono][%s][%s] %s", szLogDomain, szLogLevel, szMessage);
+	gEnv->pLog->LogWithType(engineLvl, "[Mono] [%s] [%s] %s", szLogDomain, szLogLevel, szMessage);
 
 #if CRY_PLATFORM_WINDOWS && !defined(RELEASE)
 	if (IsDebuggerPresent())
@@ -246,32 +295,33 @@ CRootMonoDomain* CMonoRuntime::GetRootDomain()
 CMonoDomain* CMonoRuntime::GetActiveDomain()
 {
 	MonoInternals::MonoDomain* pActiveMonoDomain = MonoInternals::mono_domain_get();
-	
+
 	if (CMonoDomain* pDomain = FindDomainByHandle(pActiveMonoDomain))
 	{
 		return pDomain;
 	}
 
-	auto pair = m_domainLookupMap.emplace(std::make_pair(pActiveMonoDomain, std::make_shared<CAppDomain>(pActiveMonoDomain)));
-	return pair.first->second.get();
+	CRY_ASSERT(false, "Kept here for safety if code reaches it, but should never be called");
+	m_domains.emplace_back(std::make_shared<CAppDomain>(pActiveMonoDomain));
+	static_cast<CAppDomain*>(m_domains.back().get())->Initialize();
+	return m_domains.back().get();
 }
 
-CAppDomain* CMonoRuntime::CreateDomain(char* name, bool bActivate)
+CAppDomain* CMonoRuntime::CreateDomain(const char* name, bool bActivate)
 {
-	std::shared_ptr<CAppDomain> pDomain = std::make_shared<CAppDomain>(name, bActivate);
-	auto pair = m_domainLookupMap.emplace(std::make_pair(pDomain->GetMonoDomain(), pDomain));
-
-	return pDomain.get();
+	m_domains.emplace_back(std::make_shared<CAppDomain>(name, bActivate));
+	static_cast<CAppDomain*>(m_domains.back().get())->Initialize();
+	return static_cast<CAppDomain*>(m_domains.back().get());
 }
 
 CMonoLibrary* CMonoRuntime::GetCryCommonLibrary() const
 {
-	return m_pLibCommon; 
+	return m_pPluginDomain->GetCryCommonLibrary();
 }
 
 CMonoLibrary* CMonoRuntime::GetCryCoreLibrary() const
 {
-	return m_pLibCore; 
+	return m_pPluginDomain->GetCryCoreLibrary();
 }
 
 void CMonoRuntime::RegisterManagedNodeCreator(const char* szClassName, IManagedNodeCreator* pCreator)
@@ -281,10 +331,10 @@ void CMonoRuntime::RegisterManagedNodeCreator(const char* szClassName, IManagedN
 	manager.GetNodeFactory().RegisterNodeCreator(m_nodeCreators.back().get());
 }
 
-void CMonoRuntime::RegisterNativeToManagedInterface(IMonoNativeToManagedInterface& interface)
+void CMonoRuntime::RegisterNativeToManagedInterface(IMonoNativeToManagedInterface& nativeToManagedInterface)
 {
 	string functionNamePrefix;
-	functionNamePrefix.Format("%s.%s::", interface.GetNamespace(), interface.GetClassName());
+	functionNamePrefix.Format("%s.%s::", nativeToManagedInterface.GetNamespace(), nativeToManagedInterface.GetClassName());
 
 	auto registerInternalCall = [functionNamePrefix](const void* pMethod, const char* szMethodName)
 	{
@@ -293,77 +343,49 @@ void CMonoRuntime::RegisterNativeToManagedInterface(IMonoNativeToManagedInterfac
 		MonoInternals::mono_add_internal_call(methodName, pMethod);
 	};
 
-	interface.RegisterFunctions(registerInternalCall);
+	nativeToManagedInterface.RegisterFunctions(registerInternalCall);
 }
 
-CMonoDomain* CMonoRuntime::FindDomainByHandle(MonoInternals::MonoDomain* pDomain)
+CMonoDomain* CMonoRuntime::FindDomainByHandle(MonoInternals::MonoDomain* pMonoDomain)
 {
-	auto domainIt = m_domainLookupMap.find(pDomain);
-	if (domainIt == m_domainLookupMap.end())
+	for (const std::shared_ptr<CMonoDomain>& pDomain : m_domains)
 	{
-		domainIt = m_domainLookupMap.emplace(std::make_pair(pDomain, std::make_shared<CAppDomain>(pDomain))).first;
+		if (pDomain->GetMonoDomain() == pMonoDomain)
+		{
+			return pDomain.get();
+		}
 	}
 
-	return domainIt->second.get();
+	m_domains.emplace_back(std::make_shared<CAppDomain>(pMonoDomain));
+	static_cast<CAppDomain*>(m_domains.back().get())->Initialize();
+	return m_domains.back().get();
 }
 
 CAppDomain* CMonoRuntime::LaunchPluginDomain()
 {
 	if (m_pPluginDomain != nullptr)
-		return m_pPluginDomain;
-
-	// Create the plug-in domain and activate it
-	if (m_pPluginDomain = static_cast<CAppDomain*>(CreateDomain("CryEngine.Plugins", true)))
 	{
-		char executableFolder[_MAX_PATH];
-		CryGetExecutableFolder(_MAX_PATH, executableFolder);
-
-		string libraryPath = PathUtil::Make(executableFolder, "CryEngine.Common");
-		m_pLibCommon = m_pPluginDomain->LoadLibrary(libraryPath);
-		if (m_pLibCommon == nullptr)
-		{
-			CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_ERROR, "Failed to load managed common library %s", libraryPath.c_str());
-			m_pPluginDomain = nullptr;
-			return nullptr;
-		}
-
-		libraryPath = PathUtil::Make(executableFolder, "CryEngine.Core");
-		m_pLibCore = m_pPluginDomain->LoadLibrary(libraryPath);
-		if (m_pLibCore == nullptr)
-		{
-			CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_ERROR, "Failed to load managed core library %s", libraryPath.c_str());
-			m_pPluginDomain = nullptr;
-			return nullptr;
-		}
-
-		// Get the equivalent of gEnv
-		std::shared_ptr<CMonoClass> pEngineClass = m_pLibCore->GetTemporaryClass("CryEngine", "Engine");
-		CRY_ASSERT(pEngineClass != nullptr);
-
-		// Call the static Initialize function
-		pEngineClass->FindMethod("OnEngineStart")->Invoke();
-
 		return m_pPluginDomain;
 	}
 
-	return nullptr;
+	// Create the plug-in domain and activate it
+	m_pPluginDomain = static_cast<CAppDomain*>(CreateDomain("CryEngine.Plugins", true));
+	return m_pPluginDomain;
 }
 
 void CMonoRuntime::ReloadPluginDomain()
 {
-	// Trigger removal of C++ listeners, since the memory they belong to will be invalid shortly
-	std::shared_ptr<CMonoClass> pEngineClass = m_pLibCore->GetTemporaryClass("CryEngine", "Engine");
-	CRY_ASSERT(pEngineClass != nullptr);
-
-	// Call the static Shutdown function
-	pEngineClass->FindMethod("OnUnloadStart")->Invoke();
-
-	if (m_pPluginDomain->Reload())
+	if (m_initialized)
 	{
-		pEngineClass->ReloadClass();
-
-		// Notify the framework so that internal listeners etc. can be added again.
-		pEngineClass->FindMethod("OnReloadDone")->Invoke();
+		m_pPluginDomain->Reload();
+	}
+	else
+	{
+		m_initialized = InitializeRuntime();
+		if (m_initialized)
+		{
+			InitializePluginDomain();
+		}
 	}
 }
 
@@ -387,7 +409,7 @@ void CMonoRuntime::OnManagedConsoleCommandEvent(const char* commandName, IConsol
 
 void CMonoRuntime::InvokeManagedConsoleCommandNotification(const char* szCommandName, IConsoleCmdArgs* pCommandArguments)
 {
-	std::shared_ptr<CMonoClass> pConsoleCommandArgumentHolderClass = std::static_pointer_cast<CMonoClass>(m_pLibCore->GetTemporaryClass("CryEngine", "ConsoleCommandArgumentsHolder"));
+	std::shared_ptr<CMonoClass> pConsoleCommandArgumentHolderClass = std::static_pointer_cast<CMonoClass>(m_pPluginDomain->GetCryCoreLibrary()->GetTemporaryClass("CryEngine", "ConsoleCommandArgumentsHolder"));
 	int numArguments = pCommandArguments->GetArgCount();
 
 	CMonoDomain* pDomain = static_cast<CMonoDomain*>(pConsoleCommandArgumentHolderClass->GetAssembly()->GetDomain());
@@ -396,8 +418,8 @@ void CMonoRuntime::InvokeManagedConsoleCommandNotification(const char* szCommand
 	std::shared_ptr<CMonoObject> pConsoleCommandArgumentHolderInstance = pConsoleCommandArgumentHolderClass->CreateInstance(pConstructorArgs, 1);
 
 	void* pSetArguments[2];
-	std::shared_ptr<CMonoMethod> pSetMethod = std::static_pointer_cast<CMonoMethod>(pConsoleCommandArgumentHolderClass->FindMethod("SetArgument", 2));
-	
+	std::shared_ptr<CMonoMethod> pSetMethod = pConsoleCommandArgumentHolderClass->FindMethod("SetArgument", 2).lock();
+
 	for (int i = 0; i < numArguments; ++i)
 	{
 		std::shared_ptr<CMonoString> pArgumentString = std::static_pointer_cast<CMonoString>(pDomain->CreateString(pCommandArguments->GetArg(i)));
@@ -412,135 +434,129 @@ void CMonoRuntime::InvokeManagedConsoleCommandNotification(const char* szCommand
 	void* methodArg2[2];
 	methodArg2[0] = pCommandName->GetManagedObject();
 	methodArg2[1] = pConsoleCommandArgumentHolderInstance->GetManagedObject();
-	CMonoClass* classConsoleCommand = m_pLibCore->GetClass("CryEngine", "ConsoleCommand");
-	classConsoleCommand->FindMethod("NotifyManagedConsoleCommand", 2)->Invoke(nullptr, methodArg2);
+	CMonoClass* classConsoleCommand = m_pPluginDomain->GetCryCoreLibrary()->GetClass("CryEngine", "ConsoleCommand");
+	if (std::shared_ptr<CMonoMethod> pMethod = classConsoleCommand->FindMethod("NotifyManagedConsoleCommand", 2).lock())
+	{
+		pMethod->Invoke(nullptr, methodArg2);
+	}
+}
+
+void CMonoRuntime::InitializePluginDomain()
+{
+	// Make sure the plug-in domain exists, since plugins are always loaded in there
+	CAppDomain* pPluginDomain = LaunchPluginDomain();
+	CRY_ASSERT(pPluginDomain != nullptr);
+
+	if (pPluginDomain != nullptr)
+	{
+		CManagedPlugin::s_pCrossPluginRegisteredFactories->clear();
+		CManagedPlugin::s_pCurrentlyRegisteringFactories = CManagedPlugin::s_pCrossPluginRegisteredFactories;
+
+		//Scan the Core-assembly for entity components etc.
+		std::shared_ptr<CMonoClass> pEngineClass = m_pPluginDomain->GetCryCoreLibrary()->GetTemporaryClass("CryEngine", "Engine");
+		if (std::shared_ptr<CMonoMethod> pMethod = pEngineClass->FindMethodWithDesc("ScanEngineAssembly").lock())
+		{
+			pMethod->InvokeStatic(nullptr);
+		}
+
+		CManagedPlugin::s_pCurrentlyRegisteringFactories = nullptr;
+
+		if (gEnv->IsEditor())
+		{
+			// Compile C# source files in the assets directory
+			// This is placed at the back of m_plugins to make sure that the compiled library is always the last one to be scanned.
+			const char* szAssetDirectory = gEnv->pSystem->GetIProjectManager()->GetCurrentAssetDirectoryAbsolute();
+			if (szAssetDirectory != nullptr && szAssetDirectory[0] != '\0')
+			{
+				CMonoLibrary* pCompiledLibrary = pPluginDomain->CompileFromSource(szAssetDirectory);
+				m_pAssetsPlugin = std::make_shared<CManagedPlugin>(pCompiledLibrary);
+				m_plugins.emplace_back(m_pAssetsPlugin);
+			}
+		}
+		else
+		{
+			if (CMonoLibrary* pCompiledLibrary = pPluginDomain->GetCompiledLibrary())
+			{
+				m_pAssetsPlugin = std::make_shared<CManagedPlugin>(pCompiledLibrary);
+				m_plugins.emplace_back(m_pAssetsPlugin);
+			}
+		}
+
+		for (auto it = m_plugins.begin(); it != m_plugins.end(); ++it)
+		{
+			const std::weak_ptr<IManagedPlugin>& plugin = *it;
+
+			if (std::shared_ptr<IManagedPlugin> pPlugin = plugin.lock())
+			{
+				const size_t loadOrder = std::distance(m_plugins.begin(), it);
+				pPlugin->SetLoadIndex(static_cast<int>(loadOrder));
+				pPlugin->Load(pPluginDomain);
+			}
+		}
+	}
+}
+
+static bool HasScriptFiles(const string& path)
+{
+	_finddata_t fd;
+	intptr_t handle = gEnv->pCryPak->FindFirst(path + "/*.*", &fd);
+
+	if (handle != -1)
+	{
+		do
+		{
+			// Skip back folders.
+			if (fd.name[0] == '.')
+				continue;
+
+			string filename = path;
+			filename += "/";
+			filename += fd.name;
+
+			if (fd.attrib & _A_SUBDIR)
+			{
+				if (HasScriptFiles(filename))
+				{
+					return true;
+				}
+			}
+			else if (!stricmp(PathUtil::GetExt(fd.name), "cs"))
+			{
+				return true;
+			}
+		}
+		while (gEnv->pCryPak->FindNext(handle, &fd) >= 0);
+		gEnv->pCryPak->FindClose(handle);
+	}
+
+	return false;
 }
 
 void CMonoRuntime::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam)
 {
 	switch (event)
 	{
-		case ESYSTEM_EVENT_GAME_POST_INIT:
+	case ESYSTEM_EVENT_GAME_POST_INIT:
 		{
-			// Make sure the plug-in domain exists, since plugins are always loaded in there
-			CAppDomain* pPluginDomain = LaunchPluginDomain();
-			CRY_ASSERT(pPluginDomain != nullptr);
-
-			if (pPluginDomain != nullptr)
+			// Only initialize run-time if there were C# source files present in asset directory
+			// Otherwise, C# is only initialized when a plug-in is loaded from disk
+			if (HasScriptFiles(gEnv->pSystem->GetIProjectManager()->GetCurrentAssetDirectoryAbsolute()) && !m_initialized)
 			{
-				// Temporary, remove scanning of the Core assembly when we use the unified components
-				static CManagedPlugin::TComponentFactoryMap coreLibraryFactoryMap;
-				CManagedPlugin::s_pCurrentlyRegisteringFactory = &coreLibraryFactoryMap;
+				m_initialized = InitializeRuntime();
+			}
 
-				//Scan the Core-assembly for entity components etc.
-				void* pRegisterArgs[1] = { m_pLibCore->GetManagedObject() };
-				std::shared_ptr<CMonoClass> pEngineClass = m_pLibCore->GetTemporaryClass("CryEngine", "Engine");
-				pEngineClass->FindMethodWithDesc("ScanAssembly(Assembly)")->InvokeStatic(pRegisterArgs);
-
-				CManagedPlugin::s_pCurrentlyRegisteringFactory = nullptr;
-
-				CompileAssetSourceFiles();
-
-				for (const std::weak_ptr<CManagedPlugin>& plugin : m_plugins)
-				{
-					if (std::shared_ptr<CManagedPlugin> pPlugin = plugin.lock())
-					{
-						pPlugin->Load(pPluginDomain);
-					}
-				}
+			if (m_initialized)
+			{
+				// Now compile C# from disk
+				InitializePluginDomain();
 			}
 		}
 		break;
-	}
-}
-
-void CMonoRuntime::CompileAssetSourceFiles()
-{
-	std::vector<string> sourceFiles;
-
-	const char* szAssetDirectory = gEnv->pSystem->GetIProjectManager()->GetCurrentAssetDirectoryAbsolute();
-	if (szAssetDirectory == nullptr || strlen(szAssetDirectory) == 0)
-	{
-		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "Failed to locate asset directory");
-		return;
-	}
-
-	// Return early if there is no asset directory, otherwise this will scan the whole hard-drive for .cs files.
-	if (szAssetDirectory == nullptr || szAssetDirectory[0] == '\0')
-	{
-		return;
-	}
-
-	FindSourceFilesInDirectoryRecursive(szAssetDirectory, sourceFiles);
-	if (sourceFiles.size() == 0)
-		return;
-
-	CMonoDomain* pDomain = m_pLibCore->GetDomain();
-
-	std::shared_ptr<CMonoClass> pCompilerClass = m_pLibCore->GetTemporaryClass("CryEngine.Compilation", "Compiler");
-	std::shared_ptr<CMonoMethod> pCompilationMethod = pCompilerClass->FindMethod("CompileCSharpSourceFiles", 1);
-
-	MonoInternals::MonoArray* pStringArray = MonoInternals::mono_array_new(pDomain->GetMonoDomain(), MonoInternals::mono_get_string_class(), sourceFiles.size());
-	for (int i = 0; i < sourceFiles.size(); ++i)
-	{
-		mono_array_set(pStringArray, MonoInternals::MonoString*, i, mono_string_new(pDomain->GetMonoDomain(), sourceFiles[i]));
-	}
-
-	void* pParams[1] = { pStringArray };
-	std::shared_ptr<CMonoObject> pResult = pCompilationMethod->InvokeStatic(pParams);
-	if (pResult != nullptr)
-	{
-		if (MonoInternals::MonoReflectionAssembly* pReflectionAssembly = (MonoInternals::MonoReflectionAssembly*)pResult->GetManagedObject())
+	case ESYSTEM_EVENT_FAST_SHUTDOWN:
 		{
-			MonoInternals::MonoAssembly* pAssembly = mono_reflection_assembly_get_assembly(pReflectionAssembly);
-
-			m_pAssetsPlugin = std::make_shared<CManagedPlugin>(pDomain->GetLibraryFromMonoAssembly(pAssembly));
-			m_plugins.emplace_back(m_pAssetsPlugin);
+			Shutdown();
 		}
-	}
-
-	/*for (int i = 0; i < sourceFiles.size(); ++i)
-	{
-		mono_free(mono_array_get(pStringArray, MonoInternals::MonoString*, i));
-	}*/
-}
-
-void CMonoRuntime::FindSourceFilesInDirectoryRecursive(const char* szDirectory,std::vector<string>& sourceFiles)
-{
-	string searchPath = PathUtil::Make(szDirectory, "*.cs");
-
-	_finddata_t fd;
-	intptr_t handle = gEnv->pCryPak->FindFirst(searchPath, &fd);
-	if (handle != -1)
-	{
-		do
-		{
-			sourceFiles.emplace_back(PathUtil::Make(szDirectory, fd.name));
-		} while (gEnv->pCryPak->FindNext(handle, &fd) >= 0);
-
-		gEnv->pCryPak->FindClose(handle);
-	}
-
-	// Find additional directories
-	searchPath = PathUtil::Make(szDirectory, "*.*");
-
-	handle = gEnv->pCryPak->FindFirst(searchPath, &fd);
-	if (handle != -1)
-	{
-		do
-		{
-			if (fd.attrib & _A_SUBDIR)
-			{
-				if (strcmp(fd.name, ".") != 0 && strcmp(fd.name, "..") != 0)
-				{
-					string sDirectory = PathUtil::Make(szDirectory, fd.name);
-
-					FindSourceFilesInDirectoryRecursive(sDirectory, sourceFiles);
-				}
-			}
-		} while (gEnv->pCryPak->FindNext(handle, &fd) >= 0);
-
-		gEnv->pCryPak->FindClose(handle);
+		break;
 	}
 }
 
@@ -549,25 +565,82 @@ void CMonoRuntime::HandleException(MonoInternals::MonoException* pException)
 #if CRY_PLATFORM_WINDOWS && !defined(RELEASE)
 	if (IsDebuggerPresent())
 	{
-		if (MonoInternals::MonoString* pString = MonoInternals::mono_object_to_string((MonoInternals::MonoObject*)pException, nullptr))
-		{
-			std::shared_ptr<CMonoString> pErrorMessage = CMonoDomain::CreateString(pString);
+		CMonoException exception = CMonoException(pException);
+		string exceptionMessage = exception.GetExceptionString();
+		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "Handled managed exception with debugger attached:\n%s", exceptionMessage);
 
-			CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "Handled managed exception with debugger attached:\n%s", pErrorMessage->GetString());
-
-			__debugbreak();
-		}
+		__debugbreak();
 	}
 #endif
 
 	gEnv->pHardwareMouse->UseSystemCursor(true);
-	
+
 	void* args[1];
 	args[0] = pException;
 
-	std::shared_ptr<CMonoClass> pExceptionHandlerClass = m_pLibCore->GetTemporaryClass("CryEngine.Debugging", "ExceptionHandler");
+	std::shared_ptr<CMonoClass> pExceptionHandlerClass = m_pPluginDomain->GetCryCoreLibrary()->GetTemporaryClass("CryEngine.Debugging", "ExceptionHandler");
 	CRY_ASSERT(pExceptionHandlerClass != nullptr);
 
 	// Call the static Initialize function
-	pExceptionHandlerClass->FindMethod("Display", 1)->Invoke(nullptr, args);
+	if (std::shared_ptr<CMonoMethod> pMethod = pExceptionHandlerClass->FindMethod("Display", 1).lock())
+	{
+		pMethod->Invoke(nullptr, args);
+	}
+}
+
+void CMonoRuntime::OnCoreLibrariesDeserialized()
+{
+	// Clear the previous components, and get all engine components again.
+	CManagedPlugin::s_pCrossPluginRegisteredFactories->clear();
+	CManagedPlugin::s_pCurrentlyRegisteringFactories = CManagedPlugin::s_pCrossPluginRegisteredFactories;
+
+	//Scan the Core-assembly for entity components etc.
+	std::shared_ptr<CMonoClass> pEngineClass = m_pPluginDomain->GetCryCoreLibrary()->GetTemporaryClass("CryEngine", "Engine");
+	if (std::shared_ptr<CMonoMethod> pMethod = pEngineClass->FindMethodWithDesc("ScanEngineAssembly").lock())
+	{
+		pMethod->InvokeStatic(nullptr);
+	}
+
+	CManagedPlugin::s_pCurrentlyRegisteringFactories = nullptr;
+
+	for (const std::weak_ptr<IManagedPlugin>& pWeakPlugin : m_plugins)
+	{
+		if (std::shared_ptr<IManagedPlugin> pPlugin = pWeakPlugin.lock())
+		{
+			pPlugin->OnCoreLibrariesDeserialized();
+		}
+	}
+}
+
+void CMonoRuntime::OnPluginLibrariesDeserialized()
+{
+	for (const std::weak_ptr<IManagedPlugin>& pWeakPlugin : m_plugins)
+	{
+		if (std::shared_ptr<IManagedPlugin> pPlugin = pWeakPlugin.lock())
+		{
+			pPlugin->OnPluginLibrariesDeserialized();
+		}
+	}
+}
+
+void CMonoRuntime::NotifyCompileFinished(std::vector<SCSharpCompilerError>& compileErrors)
+{
+	// Compiling should only happen in the editor, never in the GameLauncher.
+	CRY_ASSERT(gEnv->IsEditor());
+
+	m_latestCompilerErrors = compileErrors;
+
+	for (MonoCompileListeners::Notifier notifier(m_compileListeners); notifier.IsValid(); notifier.Next())
+	{
+		notifier->OnCompileFinished();
+	}
+}
+
+const SCSharpCompilerError* CMonoRuntime::GetCompileErrorAt(size_t index) const
+{
+	if (index < m_latestCompilerErrors.size())
+	{
+		return &m_latestCompilerErrors[index];
+	}
+	return nullptr;
 }

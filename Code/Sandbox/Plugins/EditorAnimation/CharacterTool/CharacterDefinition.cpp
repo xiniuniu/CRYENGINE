@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -14,9 +14,43 @@
 #include <CrySerialization/DynArray.h>
 #include <CrySerialization/Math.h>
 #include <CryExtension/CryCreateClassInstance.h>
-#include <CrySandbox/IEditorGame.h>
+#include <Cry3DEngine/IIndexedMesh.h>
+#include <Cry3DEngine/ISurfaceType.h>
 
 #include <IEditor.h>
+
+bool ProxyDimFromGeom(IGeometry *pGeom, QuatT& trans, Vec4& dim)
+{
+	dim.zero();
+	trans.SetIdentity();
+	switch (pGeom->GetType())
+	{
+		case GEOM_BOX: 
+		{
+			const primitives::box *pbox = (const primitives::box*)pGeom->GetData();
+			trans = QuatT(!Quat(pbox->Basis), pbox->center); 
+			(Vec3&)dim = pbox->size; 
+			return true;
+		}
+		case GEOM_CAPSULE:
+		case GEOM_CYLINDER:
+		{
+			const primitives::cylinder *pcyl = (const primitives::cylinder*)pGeom->GetData();
+			trans = QuatT(Quat::CreateRotationV0V1(Vec3(0,0,1), pcyl->axis), pcyl->center);
+			dim.z = pcyl->hh; dim.w = pcyl->r;
+			return true;
+		}
+		case GEOM_SPHERE:
+		{
+			const primitives::sphere *psph = (const primitives::sphere*)pGeom->GetData();
+			trans = QuatT(Quat(IDENTITY), psph->center);
+			dim.w = psph->r;
+			return true;
+		}
+		default: return false;
+	}
+}
+
 
 namespace CharacterTool
 {
@@ -48,11 +82,14 @@ static DynArray<SJointProperty> GetPhysInfoProperties_ROPE(const CryBonePhysics&
 		res.push_back(SJointProperty("SimpleBlending", !(pi.flags & 4)));
 		res.push_back(SJointProperty("Mass", RAD2DEG(fabs_tpl(pi.min[1]))));
 		res.push_back(SJointProperty("Thickness", RAD2DEG(fabs_tpl(pi.min[2]))));
+		res.push_back(SJointProperty("SleepSpeed", pi.damping[0] - 1.0f));
 		res.push_back(SJointProperty("HingeY", (pi.flags & 8) != 0));
 		res.push_back(SJointProperty("HingeZ", (pi.flags & 16) != 0));
 		res.push_back(SJointProperty("StiffnessControlBone", (float)FtoI(pi.framemtx[0][1] - 1.0f) * (pi.framemtx[0][1] >= 2.0f && pi.framemtx[0][1] < 100.0f)));
 		res.push_back(SJointProperty("EnvCollisions", !(pi.flags & 1)));
 		res.push_back(SJointProperty("BodyCollisions", !(pi.flags & 2)));
+		ISurfaceType *pSurf = gEnv->p3DEngine->GetMaterialManager()->GetSurfaceType(*(int*)(pi.spring_angle + 1));
+		res.push_back(SJointProperty("SurfaceType", pSurf && pSurf->GetId() ? pSurf->GetName() : ""));
 	}
 
 	if (nRopeOrGrid > 0)
@@ -105,18 +142,45 @@ SERIALIZATION_ENUM(RowSimulationParams::PENDULUM_HALF_CONE, "halfCone", "Pendulu
 SERIALIZATION_ENUM(RowSimulationParams::TRANSLATIONAL_PROJECTION, "projection", "Translational Projection")
 SERIALIZATION_ENUM_END()
 
+SERIALIZATION_ENUM_BEGIN_NESTED(SimulationParams, EBlendControlJointAxisToUse, "Control Joint Axis")
+SERIALIZATION_ENUM(SimulationParams::eBlendControlJointAxisToUse_X, "EBlendControlJointAxisToUse_X", "X-Axis")
+SERIALIZATION_ENUM(SimulationParams::eBlendControlJointAxisToUse_Y, "EBlendControlJointAxisToUse_Y", "Y-Axis")
+SERIALIZATION_ENUM(SimulationParams::eBlendControlJointAxisToUse_Z, "EBlendControlJointAxisToUse_Z", "Z-Axis")
+SERIALIZATION_ENUM_END()
+
 SERIALIZATION_ENUM_BEGIN_NESTED(CharacterAttachment, ProxyPurpose, "Proxy Pupose")
 SERIALIZATION_ENUM(CharacterAttachment::AUXILIARY, "auxiliary", "Auxiliary")
 SERIALIZATION_ENUM(CharacterAttachment::CLOTH, "cloth", "Cloth")
-#if INCLUDE_SECONDARY_ANIMATION_RAGDOLL
-SERIALIZATION_ENUM(CharacterAttachment::RAGDOLL, "ragdoll", "Rag Doll")
-#endif
+SERIALIZATION_ENUM(CharacterAttachment::RAGDOLL, "ragdoll", "Main Physics")
 SERIALIZATION_ENUM_END()
 
 SERIALIZATION_ENUM_BEGIN_NESTED(SJointPhysics, EType, "JointPhysics Type")
 SERIALIZATION_ENUM(SJointPhysics::EType::None, "none", "None")
 SERIALIZATION_ENUM(SJointPhysics::EType::Rope, "rope", "Rope")
 SERIALIZATION_ENUM(SJointPhysics::EType::Cloth, "cloth", "Cloth")
+SERIALIZATION_ENUM_END()
+
+SERIALIZATION_ENUM_BEGIN(geomtypes, "Geometry Type")
+SERIALIZATION_ENUM(GEOM_BOX, "box", "Box")
+SERIALIZATION_ENUM(GEOM_SPHERE, "sphere", "Sphere")
+SERIALIZATION_ENUM(GEOM_CAPSULE, "capsule", "Capsule")
+SERIALIZATION_ENUM(GEOM_CYLINDER, "cylinder", "Cylinder")
+SERIALIZATION_ENUM(GEOM_TRIMESH, "mesh", "Mesh")
+SERIALIZATION_ENUM_END()
+
+enum primtypes
+{
+	GEOM_CYLINDER = primitives::cylinder::type,
+	GEOM_CAPSULE  = primitives::capsule::type, 
+	GEOM_SPHERE   = primitives::sphere::type,
+	GEOM_BOX      = primitives::box::type
+};
+
+SERIALIZATION_ENUM_BEGIN(primtypes, "Geometry Type")
+SERIALIZATION_ENUM(GEOM_BOX, "box", "Box")
+SERIALIZATION_ENUM(GEOM_SPHERE, "sphere", "Sphere")
+SERIALIZATION_ENUM(GEOM_CAPSULE, "capsule", "Capsule")
+SERIALIZATION_ENUM(GEOM_CYLINDER, "cylinder", "Cylinder")
 SERIALIZATION_ENUM_END()
 
 enum ProjectionSelection1
@@ -177,6 +241,7 @@ SERIALIZATION_ENUM(FLAGS_ATTACH_COMPUTE_SKINNING, "compute_skinning", "Compute S
 SERIALIZATION_ENUM(FLAGS_ATTACH_COMPUTE_SKINNING_PREMORPHS, "compute_premorphs", "Apply morphs pre-skinning")
 SERIALIZATION_ENUM(FLAGS_ATTACH_COMPUTE_SKINNING_TANGENTS, "compute_tangents", "Recompute Normals")
 SERIALIZATION_ENUM(FLAGS_ATTACH_HIDE_ATTACHMENT, "hide", "Hidden                                                                     ")
+SERIALIZATION_ENUM(FLAGS_ATTACH_EXCLUDE_FROM_NEAREST, "exclude_nearest", "Exclude from nearest camera range                                                                     ")
 SERIALIZATION_ENUM(FLAGS_ATTACH_PHYSICALIZED_RAYS, "physicalized_rays", "Physicalized Rays                                                          ")
 SERIALIZATION_ENUM(FLAGS_ATTACH_PHYSICALIZED_COLLISIONS, "physicalized_collisions", "Physicalized Collisions                                                    ")
 SERIALIZATION_ENUM(FLAGS_ATTACH_SW_SKINNING, "cpu_skinning", "CPU Skinning")
@@ -277,6 +342,39 @@ bool Serialize(Serialization::IArchive& ar, ProxySet& set, const char* name, con
 
 // ---------------------------------------------------------------------------
 
+namespace
+{
+
+struct BlendControlJoint
+{
+	BlendControlJoint(
+		SimulationParams& param
+	)
+		: m_param(param)
+	{}
+
+	void Serialize(Serialization::IArchive& ar)
+	{
+		CCryName name = m_param.GetBlendControlJointName();
+		SimulationParams::EBlendControlJointAxisToUse axis = m_param.GetBlendControlAxis();
+
+		ar(JointName(name), "JointBlendControlName", "Blend Control Joint");
+		ar(axis, "JointBlendControlAxis", "Blend Control Axis");
+
+		m_param.SetBlendControlJointName(name);
+		m_param.SetBlendControlAxis(axis);
+	}
+
+	private:
+
+	SimulationParams& m_param;
+};
+
+
+}
+
+// ---------------------------------------------------------------------------
+
 struct SimulationParamsSerializer
 {
 	SimulationParams& p;
@@ -337,10 +435,9 @@ struct SimulationParamsSerializer
 				{
 					ar(ProxySet(p.m_arrProxyNames, definition), "proxyNames", "Available Collision Proxies");
 				}
-			}
-			else
-			{
-				ar.warning(p.m_useRedirect, "Either Redirection or Geometry should be specified for simulation to function.\n(ignore this warning if you left geometry empty on purpose, e.g. inventory slots)");
+
+				BlendControlJoint bcj(p);
+				bcj.Serialize(ar);
 			}
 		}
 
@@ -382,10 +479,9 @@ struct SimulationParamsSerializer
 					if (p.m_nProjectionType)
 						ar(ProxySet(p.m_arrProxyNames, definition), "proxyNames", "Available Collision Proxies");
 				}
-			}
-			else
-			{
-				ar.warning(p.m_useRedirect, "Either Redirection or Geometry should be specified for simulation to function.\n(ignore this warning if you left geometry empty on purpose, e.g. inventory slots)");
+
+				BlendControlJoint bcj(p);
+				bcj.Serialize(ar);
 			}
 		}
 
@@ -478,10 +574,8 @@ void SJointPhysics::Serialize(Serialization::IArchive& ar)
 	auto& jointProperties = (type == EType::Rope) ? ropeProperties : clothProperties;
 	for (int setIndex = 0; setIndex < ePropertySetIndex_COUNT; ++setIndex)
 	{
-		if (setIndex == ePropertySetIndex_Alive)
-			ar.openBlock("aliveProperties", "Properties When Alive");
-		else
-			ar.openBlock("ragdollProperties", "Properties When Ragdollized");
+		if (!(setIndex == ePropertySetIndex_Alive ? ar.openBlock("aliveProperties", "Properties When Alive") : ar.openBlock("ragdollProperties", "Properties When Ragdollized")))
+			continue;
 
 		if (jointProperties[setIndex].empty())
 		{
@@ -506,11 +600,26 @@ void SJointPhysics::Serialize(Serialization::IArchive& ar)
 					ar(property.bval, property.name, property.name);
 					break;
 				}
-			case 2:
-				{
-					assert(false);
-					break;
+			case 2:	// only used for surfacetype name
+				if (ISurfaceTypeEnumerator* pSurfaceTypeEnum = gEnv->p3DEngine->GetMaterialManager()->GetSurfaceTypeManager()->GetEnumerator())
+				{	
+					Serialization::StringList surfList;
+					int idx = 0;
+					ISurfaceType *pCurST = gEnv->p3DEngine->GetMaterialManager()->GetSurfaceTypeByName(property.strval);
+					for (ISurfaceType* pST = pSurfaceTypeEnum->GetFirst(); pST; pST = pSurfaceTypeEnum->GetNext())
+					{
+						idx += pST == pCurST ? surfList.size()-idx : 0;
+						surfList.push_back(pST->GetName());
+					}
+					Serialization::StringListValue val(surfList, idx);
+					ar(val, property.name, property.name);
+					if (ar.isInput())
+					{
+						pCurST = gEnv->p3DEngine->GetMaterialManager()->GetSurfaceTypeByName(val.c_str());
+						property.strval = pCurST && pCurST->GetId() ? pCurST->GetName() : "";
+					}
 				}
+				break;
 			}
 		}
 		ar.closeBlock();
@@ -545,8 +654,14 @@ void SJointPhysics::LoadFromXml(const XmlNodeRef& node)
 			cry_sprintf(buf, "lod%d_%s", setIndex, property.name);
 			if (property.type == 0)
 				node->getAttr(buf, property.fval);
-			else
+			else if (property.type == 1)
 				node->getAttr(buf, property.bval);
+			else
+			{	// only used for surfacetype name
+				string str;
+				ISurfaceType *pST = node->getAttr(buf, str) ? gEnv->p3DEngine->GetMaterialManager()->GetSurfaceTypeByName(str) : nullptr;
+				property.strval = pST && pST->GetId() ? pST->GetName() : "";
+			}
 		}
 	}
 }
@@ -569,19 +684,749 @@ void SJointPhysics::SaveToXml(XmlNodeRef node) const
 			cry_sprintf(buf, "lod%d_%s", setIndex, property.name);
 			if (property.type == 0)
 				node->setAttr(buf, property.fval);
-			else
+			else if (property.type == 1)
 				node->setAttr(buf, property.bval);
+			else if (*property.strval)
+				node->setAttr(buf, property.strval);
 		}
 	}
 }
 
+IGeometry *CharacterAttachment::CreateProxyGeom() const
+{
+	IGeometry *pGeom = nullptr;
+	IGeomManager *pGeoman = gEnv->pPhysicalWorld->GetGeomManager();
+	switch (m_ProxyType)
+	{
+		case GEOM_BOX: {
+			primitives::box box;
+			box.Basis = Matrix33(!m_jointSpacePosition.q);
+			box.center = m_jointSpacePosition.t;
+			box.size = (Vec3&)m_ProxyParams;
+			pGeom = pGeoman->CreatePrimitive(primitives::box::type, &box);
+			break;
+		}
+		case GEOM_SPHERE: {
+			primitives::sphere sph;
+			sph.center = m_jointSpacePosition.t;
+			sph.r = m_ProxyParams.w;
+			pGeom = pGeoman->CreatePrimitive(primitives::sphere::type, &sph);
+			break;
+		}
+		case GEOM_CAPSULE: case GEOM_CYLINDER: {
+			primitives::cylinder cyl;
+			cyl.axis = m_jointSpacePosition.q * Vec3(0,0,1);
+			cyl.center = m_jointSpacePosition.t;
+			cyl.hh = m_ProxyParams.z;
+			cyl.r = m_ProxyParams.w;
+			pGeom = pGeoman->CreatePrimitive(m_ProxyType == GEOM_CYLINDER ? primitives::cylinder::type : primitives::capsule::type, &cyl);
+			break;
+		}
+		case GEOM_TRIMESH: {
+			if (!m_proxySrc || !m_proxySrc->m_proxyMesh)
+				return nullptr;
+			if ((m_jointSpacePosition.q | Quat(IDENTITY)) > 0.999f && m_jointSpacePosition.t.len2() < sqr(0.001f))
+			{
+				m_proxySrc->m_proxyMesh->AddRef();
+				return m_proxySrc->m_proxyMesh;
+			}
+			mesh_data& md = *(mesh_data*)m_proxySrc->m_proxyMesh->GetData();
+			Vec3 *vtx = new Vec3[md.nVertices];
+			for(int i = 0; i < md.nVertices; i++)
+				vtx[i] = m_jointSpacePosition * md.pVertices[i];
+			pGeom = pGeoman->CreateMesh(vtx, md.pIndices, md.pMats, md.pForeignIdx, md.nTris, md.flags, 0.0f);
+			delete[] vtx;
+		}
+	}
+	return pGeom;
+}
+
+void CharacterAttachment::ChangeProxyType()
+{
+	IGeometry *mesh = m_proxySrc ? (m_proxySrc->m_hullMesh ? m_proxySrc->m_hullMesh : m_proxySrc->m_proxyMesh) : nullptr;
+	if (mesh)
+	{
+		if (m_ProxyType != GEOM_TRIMESH)
+		{
+			mesh_data& md = *(mesh_data*)mesh->GetData();
+			int flags = mesh_approx_box;
+			switch (m_ProxyType)
+			{
+				case GEOM_CYLINDER: flags = mesh_approx_cylinder; break;
+				case GEOM_CAPSULE: flags = mesh_approx_capsule; break;
+				case GEOM_SPHERE: flags = mesh_approx_sphere; break;
+			}
+			IGeometry *pPrim = gEnv->pPhysicalWorld->GetGeomManager()->CreateMesh(md.pVertices, md.pIndices, nullptr, nullptr, md.nTris, flags, 1e10f);
+			ProxyDimFromGeom(pPrim, m_jointSpacePosition, m_ProxyParams);
+			m_ProxyParams *= min(1.0f, (1 + pow(mesh->GetVolume()/pPrim->GetVolume(), 1.0f/3)) * 0.5f);
+			pPrim->Release();
+		} 
+		else
+			m_jointSpacePosition.SetIdentity();
+	}
+	else
+	{
+		Vec3 size = (Vec3&)m_prevProxyParams, axis(ZERO);
+		float r = m_prevProxyParams.w, hh = m_prevProxyParams.z;
+		int i;
+		#define GSWITCH(a,b) ((int)(a) * 16 + (int)(b))
+		switch (GSWITCH(m_prevProxyType, m_ProxyType))
+		{
+			case GSWITCH(GEOM_BOX, GEOM_CYLINDER):
+			case GSWITCH(GEOM_BOX, GEOM_CAPSULE):
+				i = max(max(size.x,size.y),size.z)*2.5f > size.x + size.y + size.z ? idxmax3(size) : idxmin3(size);
+				hh = size[i];
+				r = sqrt(size.GetVolume() * 4 / (hh * gf_PI));
+				axis[i] = 1;
+				m_jointSpacePosition.q = m_jointSpacePosition.q * Quat::CreateRotationV0V1(Vec3(0,0,1), axis);
+				if (m_ProxyType == GEOM_CAPSULE)
+					hh = max(0.0f, hh - r * (2.0f/3));
+				m_ProxyParams = Vec4(0, 0, hh, r);
+				break;
+			case GSWITCH(GEOM_BOX, GEOM_SPHERE):
+				m_ProxyParams = Vec4(0, 0, 0, pow(size.GetVolume() * (6/gf_PI), 1.0f/3));
+				break;
+
+			case GSWITCH(GEOM_CAPSULE, GEOM_BOX):
+				m_ProxyParams.z += r * (2.0f/3);
+			case GSWITCH(GEOM_CYLINDER, GEOM_BOX):
+				m_ProxyParams.x = m_ProxyParams.y = r * sqrt(gf_PI)*0.5f;
+				m_ProxyParams.w = 0;
+				break;
+			case GSWITCH(GEOM_CYLINDER, GEOM_CAPSULE):
+				m_ProxyParams.z = max(0.0f, hh - r * (2.0f/3));
+				break;
+			case GSWITCH(GEOM_CYLINDER, GEOM_SPHERE):
+				m_ProxyParams = Vec4(0, 0, 0, pow(sqr(r)*hh*1.5f, 1.0f/3));
+				break;
+
+			case GSWITCH(GEOM_CAPSULE, GEOM_CYLINDER):
+				m_ProxyParams.z += r * (2.0f/3);
+				break;
+			case GSWITCH(GEOM_CAPSULE, GEOM_SPHERE):
+				m_ProxyParams = Vec4(0, 0, 0, pow((hh*1.5f + r)*sqr(r), 1.0f/3));
+				break;
+
+			case GSWITCH(GEOM_SPHERE, GEOM_BOX):
+				m_ProxyParams.x = m_ProxyParams.y = m_ProxyParams.z = r * pow(4*gf_PI/3, 1.0f/3) * 0.5f;
+				m_ProxyParams.w = 0;
+				break;
+			case GSWITCH(GEOM_SPHERE, GEOM_CYLINDER):
+				m_ProxyParams.z = r * (2.0f/3);
+				break;
+		}
+		#undef GSWITCH			
+	}
+	m_prevProxyType = m_ProxyType;
+	m_prevProxyParams = m_ProxyParams;
+	m_positionSpace = m_rotationSpace = SPACE_JOINT;
+}
+
+void CharacterAttachment::GenerateMesh()
+{
+	if (!m_proxySrc)
+		return;
+	if (m_proxySrc->m_hullMesh && m_meshSmooth > 0)
+	{
+		IGeometry** pGeoms;
+		IGeometry::SProxifyParams pp;
+		pp.ncells = 40;
+		pp.findPrimLines = 0;
+		pp.findPrimSurfaces = 0;
+		pp.surfMaxAndMinNorms = 1;
+		pp.reuseVox = m_proxySrc->m_proxyMesh && m_proxySrc->m_proxyMesh != m_proxySrc->m_hullMesh ? 1 : 0;
+		pp.storeVox = pp.reuseVox ^ 1;
+		pp.surfMeshIters = m_meshSmooth;
+		if (int ngeoms = m_proxySrc->m_hullMesh->Proxify(pGeoms, &pp))
+		{
+			for(int i = 1; i < ngeoms; i++)
+				if (pGeoms[i]->GetVolume() > pGeoms[0]->GetVolume())
+					std::swap(pGeoms[0], pGeoms[i]);
+			IPhysUtils *pUtils = gEnv->pPhysicalWorld->GetPhysUtils();
+			if (m_meshSmooth > 2)
+			{
+				mesh_data& md = *(mesh_data*)pGeoms[0]->GetData();
+				index_t* pTris = nullptr;
+				int nTris = pUtils->qhull(md.pVertices, md.nVertices, pTris);
+				m_proxySrc->m_proxyMesh = gEnv->pPhysicalWorld->GetGeomManager()->CreateMesh(md.pVertices, pTris, nullptr,nullptr, nTris, mesh_AABB);
+				pUtils->DeletePointer(pTris);
+				m_proxySrc->m_proxyMesh->Release();
+			}
+			else
+				m_proxySrc->m_proxyMesh = pGeoms[0];
+			for(int i = 0; i < ngeoms; i++)
+				pGeoms[i]->Release();
+			pUtils->DeletePointer(pGeoms);
+		}
+	} 
+	else
+		m_proxySrc->m_proxyMesh = m_proxySrc->m_hullMesh;
+	m_prevMeshSmooth = m_meshSmooth;
+}
+
+void CharacterAttachment::UpdateMirrorInfo(int idBone, const IDefaultSkeleton& skel)
+{
+	m_boneTransMirror.SetIdentity();
+	int idc = skel.GetJointChildIDAtIndexByID(idBone, 0);
+	m_dirChild = idc >= 0 ? skel.GetDefaultRelJointByID(idc).t : Vec3(ZERO);
+
+	// find mirror bones by left-right substring matching ('#' means string start or end)
+	const char* mirrorNames[] = { " l ", " r ",  "_l_", "_r_",  "#l ", "#r ",  "#l_", "#r_",  " l#", " r#",  "_l#", "_r#",  "left", "right" };
+	string jname0 = m_strJointName, jname1; 
+	jname0.MakeLower();
+	for(int j = 0, id1 = -1; j < CRY_ARRAY_COUNT(mirrorNames) && id1 < 0; j++)
+	{
+		int l = strlen(mirrorNames[j]) - 1;
+		if (*mirrorNames[j] == '#' && !strncmp(jname0, mirrorNames[j] + 1, l))
+			(jname1 = mirrorNames[j ^ 1] + 1).append(jname0.c_str() + l);
+		else if (mirrorNames[j][l] == '#' && !strncmp(jname0.c_str() - l, mirrorNames[j], l))
+			(jname1 = jname0.substr(0, jname0.length() - l)).append(mirrorNames[j ^ 1], l);
+		else if (const char *p = strstr(jname0, mirrorNames[j]))
+			jname1 = jname0.substr(0, p - jname0.c_str()) + string(mirrorNames[j ^ 1]) + string(p + l + 1);
+		else
+			continue;
+		m_strJointNameMirror = skel.GetJointNameByID(id1 = skel.GetJointIDByName(jname1));
+		m_boneTransMirror = skel.GetDefaultAbsJointByID(id1);
+	}
+	m_updateMirror = false;
+}
+
+void MirrorAttachment(const CharacterAttachment& att0, CharacterAttachment& att1)
+{
+	Vec3 axes[2], dir = att0.m_dirChild;
+	QuatT trans[] = { att0.m_boneTrans, att0.m_boneTransMirror };
+	if (!dir.len2()) // use the principal direction of the phys proxy primitive if child direction not available
+		dir = Quat(att0.m_jointSpacePosition.q).GetColumn(att0.m_ProxyType == GEOM_BOX ? idxmax3(&att0.m_ProxyParams.x) : 2);
+	for(int j = 0; j < 2; j++)
+		axes[j] = trans[j].q.GetColumn(idxmax3(dir.abs()));
+	Vec3 axis = ((axes[0] - axes[1]).len2() > 0.001f ? axes[0] - axes[1] : trans[0].t - trans[1].t).normalized();
+	axis *= sgnnz(axis[idxmax3(axis.abs())]);
+
+	att1.m_strJointName = att0.m_strJointNameMirror;
+	att1.m_strJointNameMirror = att0.m_strJointName;
+	att1.m_strSocketName = string("$") + att1.m_strJointName;
+	att1.m_attachmentType = CA_PROX;
+	att1.m_ProxyPurpose = CharacterAttachment::RAGDOLL;
+	att1.m_rotationSpace = CharacterAttachment::SPACE_JOINT;
+	att1.m_positionSpace = CharacterAttachment::SPACE_JOINT;
+	att1.m_boneTrans = att0.m_boneTransMirror;
+	att1.m_boneTransMirror = att0.m_boneTrans;
+	auto Mirror = [axis](const Vec3& v) { return v - axis * ((axis * v) * 2); };
+	att1.m_dirChild = Mirror(trans[0].q * att0.m_dirChild) * trans[1].q;
+	Matrix33 mtx;
+	for(int j = 0; j < 2; j++)
+		mtx.SetColumn(j + 1, !trans[1].q * Mirror(trans[0].q * Quat(att0.m_jointSpacePosition.q).GetColumn(j + 1)));
+	mtx.SetColumn(0, mtx.GetColumn1() ^ mtx.GetColumn2());
+	att1.m_jointSpacePosition.q = Quat(mtx);
+	att1.m_ProxyParams = att1.m_prevProxyParams = att0.m_ProxyParams;
+	att1.m_jointSpacePosition.t = Mirror(trans[0].q * att0.m_jointSpacePosition.t) * trans[1].q;
+	att1.m_ProxyType = att1.m_prevProxyType = att0.m_ProxyType;
+	att1.m_proxySrc = nullptr;
+	att1.m_meshSmooth = att1.m_prevMeshSmooth = 0;
+	att1.m_characterSpacePosition = trans[1] * att1.m_jointSpacePosition;
+	att1.m_limits[0] = -att0.m_limits[1]; att1.m_limits[1] = -att0.m_limits[0];
+	mtx = Matrix33(trans[0].q * Quat(att0.m_frame0));
+	Vec3 axProj, axNew;
+	for(int j = 0; j < 3; j++)
+	{
+		axProj[j] = (axes[1] * (axNew = Mirror(mtx.GetColumn(j))));
+		mtx.SetColumn(j, axNew);
+	}
+	int icorr = idxmax3(axProj.abs()), iter = 0;
+	do 
+	{	// we'll have to flip one axis of q0, choose it so that q0 (global and mirrored) is close to trans[1].q
+		icorr = inc_mod3[icorr];
+		axNew = mtx.GetColumn(inc_mod3[icorr]) ^ mtx.GetColumn(dec_mod3[icorr]);
+	} while	(++iter < 2 && (axNew * trans[1].q.GetColumn(icorr)) < 0);
+	if (mtx.GetColumn(icorr) * axNew < 0)
+		std::swap(att1.m_limits[0][icorr] *= -1, att1.m_limits[1][icorr] *= -1);
+	mtx.SetColumn(icorr, axNew);
+	att1.m_frame0 = Ang3(Matrix33(!trans[1].q) * mtx);
+	for(int j = 0; j < 3; j++)
+		att1.m_frame0[j] = ((int)fabs(att1.m_frame0[j] * 10) * 0.1f) * sgnnz(att1.m_frame0[j]);
+	att1.m_damping = att0.m_damping;
+	att1.m_tension = att0.m_tension;
+	att1.m_submtlId = att0.m_submtlId;
+	att1.m_updateMirror = false;
+}
+
+std::map<INT_PTR,_smart_ptr<CharacterAttachment::ProxySource>> CharacterDefinition::g_meshArchive;
+int CharacterDefinition::g_meshArchiveUsed = 0;
+
+void CharacterAttachment::SerializeBone(Serialization::IArchive& ar)
+{
+	ar(JointName(m_strJointName), "jointName", "Joint");
+
+	ar(ResourceFilePath(m_strGeometryFilepath, "Attachment Geometry (cgf, cga, chr, cdf)|*.cgf;*.cga;*chr;*.cdf", "Objects"), "geometry", "<Geometry");
+	ar(Serialization::MaterialPicker(m_strMaterial), "material", "<Material");
+	ar(m_viewDistanceMultiplier, "viewDistanceMultiplier", "View Distance Multiplier");
+
+	ar(m_positionSpace, "positionSpace", "Store Position");
+	ar(m_rotationSpace, "rotationSpace", "Store Rotation");
+	if (ar.isEdit())
+	{
+		const char* transformNamesBySpaces[] = { "transform_jj", "transform_jc", "transform_cj", "transform_cc" };
+		const char* transformName = transformNamesBySpaces[(int)m_rotationSpace * 2 + (int)m_positionSpace];
+		QuatT& abs = m_characterSpacePosition;
+		QuatT& rel = m_jointSpacePosition;
+		bool rotJointSpace = m_rotationSpace == SPACE_JOINT;
+		bool posJointSpace = m_positionSpace == SPACE_JOINT;
+		ar(Serialization::LocalFrame(rotJointSpace ? &rel.q : &abs.q, rotJointSpace ? Serialization::SPACE_SOCKET_RELATIVE_TO_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
+			posJointSpace ? &rel.t : &abs.t, posJointSpace ? Serialization::SPACE_SOCKET_RELATIVE_TO_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
+			m_strSocketName.c_str(), this),
+			transformName,
+			"+Transform"
+		);
+		abs.q.Normalize();
+		rel.q.Normalize();
+	}
+	else
+	{
+		if (m_rotationSpace == SPACE_JOINT)
+			ar(m_jointSpacePosition.q, "jointRotation", 0);
+		else
+			ar(m_characterSpacePosition.q, "characterRotation", 0);
+		if (m_positionSpace == SPACE_JOINT)
+			ar(m_jointSpacePosition.t, "jointPosition", 0);
+		else
+			ar(m_characterSpacePosition.t, "characterPosition", 0);
+	}
+
+	ar(m_simulationParams, "simulation", "+Simulation");
+
+	int availableFlags = FLAGS_ATTACH_HIDE_ATTACHMENT | FLAGS_ATTACH_PHYSICALIZED_RAYS | FLAGS_ATTACH_PHYSICALIZED_COLLISIONS | FLAGS_ATTACH_EXCLUDE_FROM_NEAREST;
+	BitFlags<AttachmentFlags>(m_nFlags, availableFlags).Serialize(ar);
+	if ((m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0)
+		ar.warning(*this, "Hidden by default.");
+
+	ar(m_jointPhysics, "jointPhysics", "Rope/Cloth Physics");
+}
+
+void CharacterAttachment::SerializeFace(Serialization::IArchive& ar)
+{
+	ar(ResourceFilePath(m_strGeometryFilepath, "Attachment Geometry (cgf, cga, chr, cdf)|*.cgf;*.cga;*chr;*.cdf", "Objects"), "geometry", "<Geometry");
+	ar(ResourceFilePath(m_strMaterial, "Materials (mtl)|*.mtl", "Materials"), "material", "<Material");
+	ar(m_viewDistanceMultiplier, "viewDistanceMultiplier", "View Distance Multiplier");
+
+	if (ar.isInput())
+	{
+		m_positionSpace = SPACE_CHARACTER;
+		m_rotationSpace = SPACE_CHARACTER;
+	}
+	QuatT& abs = m_characterSpacePosition;
+	ar(Serialization::LocalFrame(&abs.q, Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE, &abs.t, Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE, m_strSocketName.c_str(), this),
+		"characterPosition",
+		"+Transform"
+	);
+	abs.q.Normalize();
+
+	if (ar.isEdit())
+		ar(m_jointSpacePosition, "jointPosition", 0);
+
+	ar(m_simulationParams, "simulation", "+Simulation");
+	if (m_simulationParams.m_nClampType == SimulationParams::TRANSLATIONAL_PROJECTION)
+		m_simulationParams.m_nClampType = SimulationParams::DISABLED; //you can't choose this mode on face attachments
+
+	int availableFlags = FLAGS_ATTACH_HIDE_ATTACHMENT | FLAGS_ATTACH_PHYSICALIZED_RAYS | FLAGS_ATTACH_PHYSICALIZED_COLLISIONS | FLAGS_ATTACH_EXCLUDE_FROM_NEAREST;
+	BitFlags<AttachmentFlags>(m_nFlags, availableFlags).Serialize(ar);
+	if ((m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0)
+		ar.warning(*this, "Hidden by default.");
+}
+
+void CharacterAttachment::SerializeSkin(Serialization::IArchive& ar)
+{
+	ar(ResourceFilePath(m_strGeometryFilepath, "Attachment Geometry (skin)|*.skin", "Objects"), "geometry", "<Geometry");
+	ar(ResourceFilePath(m_strMaterial, "Materials (mtl)|*.mtl", "Materials"), "material", "<Material");
+	ar(m_viewDistanceMultiplier, "viewDistanceMultiplier", "View Distance Multiplier");
+
+	int availableFlags = FLAGS_ATTACH_HIDE_ATTACHMENT | FLAGS_ATTACH_EXCLUDE_FROM_NEAREST;
+	{
+		SkinningMethod skinningMethod = SKINNING_VERTEX_SHADER;
+		if (m_nFlags & FLAGS_ATTACH_SW_SKINNING)
+			skinningMethod = SKINNING_CPU;
+		else if (m_nFlags & FLAGS_ATTACH_COMPUTE_SKINNING)
+		{
+			skinningMethod = SKINNING_COMPUTE_SHADER;
+			availableFlags |= FLAGS_ATTACH_COMPUTE_SKINNING_PREMORPHS | FLAGS_ATTACH_COMPUTE_SKINNING_TANGENTS;
+		}
+
+		ar(skinningMethod, "skinningMethod", "Skinning Method");
+
+		m_nFlags &= ~(FLAGS_ATTACH_SW_SKINNING | FLAGS_ATTACH_COMPUTE_SKINNING);
+		switch (skinningMethod)
+		{
+		case SKINNING_VERTEX_SHADER:
+			break;
+		case SKINNING_CPU:
+			m_nFlags |= FLAGS_ATTACH_SW_SKINNING;
+			break;
+		case SKINNING_COMPUTE_SHADER:
+			m_nFlags |= FLAGS_ATTACH_COMPUTE_SKINNING;
+			break;
+		default:
+			assert(false && "Unknown Skinning Method");
+			break;
+		}
+	}
+
+	BitFlags<AttachmentFlags>(m_nFlags, availableFlags).Serialize(ar);
+
+	if ((m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0)
+		ar.warning(*this, "Hidden by default.");
+
+	ar(m_positionSpace, "positionSpace", 0);
+	ar(m_rotationSpace, "rotationSpace", 0);
+	ar(m_jointSpacePosition, "relativeJointPosition", 0);
+	ar(m_characterSpacePosition, "relativeCharacterPosition", 0);
+}
+
+void CharacterAttachment::SerializeProxy(Serialization::IArchive& ar)
+{
+	ar(JointName(m_strJointName), "jointName", "Joint");
+
+	ar(m_positionSpace, "positionSpace", "Store Position");
+	ar(m_rotationSpace, "rotationSpace", "Store Rotation");
+	if (ar.isEdit())
+	{
+		const char* transformNamesBySpaces[] = { "transform_jj", "transform_jc", "transform_cj", "transform_cc" };
+		const char* transformName = transformNamesBySpaces[(int)m_rotationSpace * 2 + (int)m_positionSpace];
+		QuatT& abs = m_characterSpacePosition;
+		QuatT& rel = m_jointSpacePosition;
+		bool rotJointSpace = m_rotationSpace == SPACE_JOINT;
+		bool posJointSpace = m_positionSpace == SPACE_JOINT;
+		ar(Serialization::LocalFrame(rotJointSpace ? &rel.q : &abs.q, rotJointSpace ? Serialization::SPACE_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
+			posJointSpace ? &rel.t : &abs.t, posJointSpace ? Serialization::SPACE_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
+			m_strSocketName.c_str(), this),
+			transformName,
+			"+Transform"
+		);
+		abs.q.Normalize();
+		rel.q.Normalize();
+	}
+	else
+	{
+		if (m_rotationSpace == SPACE_JOINT)
+			ar(m_jointSpacePosition.q, "jointRotation", 0);
+		else
+			ar(m_characterSpacePosition.q, "characterRotation", 0);
+		if (m_positionSpace == SPACE_JOINT)
+			ar(m_jointSpacePosition.t, "jointPosition", 0);
+		else
+			ar(m_characterSpacePosition.t, "characterPosition", 0);
+	}
+
+	ar(m_ProxyPurpose, "proxyPurpose", "Purpose");
+
+	if (m_ProxyPurpose == CharacterAttachment::RAGDOLL)
+	{
+		INT_PTR ptr = (INT_PTR)(ProxySource*)m_proxySrc;
+		ar(ptr, "src");
+		if (ar.isInput())
+			m_proxySrc = ptr ? CharacterDefinition::g_meshArchive.find(ptr)->second : nullptr;
+		else
+			CharacterDefinition::g_meshArchive.insert(std::pair<INT_PTR, _smart_ptr<ProxySource>>(ptr, m_proxySrc));
+		if (ar.isOutput() && !m_proxySrc)
+			ar((primtypes&)m_ProxyType, "geomtype", "Type");
+		else
+			ar(m_ProxyType, "geomtype", "Type");
+		ar(m_prevProxyType, "prev_geomtype");
+		if (m_ProxyType != m_prevProxyType)
+			ChangeProxyType();
+		else switch (m_ProxyType)
+		{
+		case GEOM_BOX:
+			ar.openBlock("size", "Half-size");
+			ar(Serialization::Range(m_ProxyParams.x, 0.0f, 10.0f, 0.01f), "x", "^");
+			ar(Serialization::Range(m_ProxyParams.y, 0.0f, 10.0f, 0.01f), "y", "^");
+			ar(Serialization::Range(m_ProxyParams.z, 0.0f, 10.0f, 0.01f), "z", "^");
+			ar.closeBlock();
+			break;
+		case GEOM_CAPSULE: case GEOM_CYLINDER:
+			ar(Serialization::Range(m_ProxyParams.z, 0.0f, 10.0f, 0.01f), "height", "Half-height");
+		case GEOM_SPHERE:
+			ar(Serialization::Range(m_ProxyParams.w, 0.0f, 10.0f, 0.01f), "r", "Radius");
+			break;
+		case GEOM_TRIMESH:
+			ar(Serialization::Range(m_meshSmooth, 0, 5), "smooth", m_proxySrc && m_proxySrc->m_hullMesh ? "Mesh Simplification" : nullptr);
+			if (m_meshSmooth != m_prevMeshSmooth)
+				GenerateMesh();
+			break;
+		default:
+			assert(false && "Unknown Proxy Type");
+			break;
+		}
+		for (int i = 0; i < 2; i++)
+		{
+			ar.openBlock(&("mina\0maxa"[i * 5]), &("Min Angle\0Max Angle"[i * 10]));
+			for (int j = 0; j < 3; j++)
+				ar(Serialization::Range(m_limits[i][j], -180, 180, 5), &("x\0y\0z"[j * 2]), "^");
+			ar.closeBlock();
+		}
+		ar(Serialization::RadiansAsDeg(m_frame0), "frame0", "Rotation0");
+		ar(m_tension, "tension", "Spring Tension");
+		ar(m_damping, "damping", "Spring Damping");
+		ar(m_submtlId, "submtl", "SubMtl Index");
+		ar(m_strJointNameMirror, "mirrorName");
+		ar(m_boneTrans, "boneTrans");
+		ar(m_boneTransMirror, "boneTransMirror");
+		ar(m_dirChild, "dirChild");
+		ar(m_prevProxyParams, "prevDim");
+		if (m_ProxyType != GEOM_TRIMESH && *m_strJointNameMirror)
+			ar(Serialization::ToggleButton(m_updateMirror), "mirrorUpd", "Update L/R Mirror");
+	}
+	else if (ar.openBlock("lozenge", "+Lozenge"))
+	{
+		ar.doc("The Lozenge collision primitive is defined by 4 numbers.\n"
+			"With these 4 numbers, points, spheres, capsules, line-segments,\n"
+			"rectangles, boxes, 2D-Lozenges and 3D-Lozenges can be created.\n"
+			"That is 8 different shapes (and everything in-between) that can be\n"
+			"used to approximate the shape of arms, legs and the torso of a human body.\n"
+			"If all numbers are non-zero, the shape is a box with edge lengths defined\n"
+			"by \"Size/X/Y/Z\" and a rounded border with a width defined by \"Border Width\".");
+		ar(Serialization::Range(m_ProxyParams.w, 0.0f, 1.0f), "borderWidth", "Border Width");
+		ar.doc("The width of the rounded border around the box of extends defined below. "
+			"If no XYZ is set, this is the radius of a sphere.");
+		ar(Serialization::RadiusWithRangeAsDiameter(m_ProxyParams.x, 0.0f, 1.0f), "sizeX", "Size X");
+		ar.doc("The size of the box in the X dimension without the border.");
+		ar(Serialization::RadiusWithRangeAsDiameter(m_ProxyParams.y, 0.0f, 1.0f), "sizeY", "Size Y");
+		ar.doc("The size of the box in the Y dimension without the border.");
+		ar(Serialization::RadiusWithRangeAsDiameter(m_ProxyParams.z, 0.0f, 1.0f), "sizeZ", "Size Z");
+		ar.doc("The size of the box in the Z dimension without the border.");
+		ar.closeBlock();
+	}
+}
+
+void CharacterAttachment::SerializePRow(Serialization::IArchive& ar)
+{
+	ar(JointName(m_strRowJointName), "rowJointName", "Row Joint Name");
+
+	ar(m_rowSimulationParams.m_nClampMode, "clampMode", "Clamp Mode");
+	ar(m_rowSimulationParams.m_useDebugSetup, "useDebug", "Debug Setup                                                           ");
+	ar(m_rowSimulationParams.m_useDebugText, "useDebugText", "Debug Text                                                            ");
+	ar(m_rowSimulationParams.m_useSimulation, "useSimulation", "Activate Simulation                                                   ");
+
+	RowSimulationParams::ClampMode ct = m_rowSimulationParams.m_nClampMode;
+	if (ct == RowSimulationParams::TRANSLATIONAL_PROJECTION)
+	{
+		ar((ProjectionSelection4&)m_rowSimulationParams.m_nProjectionType, "projectionType", "Projection Type");
+		if (m_rowSimulationParams.m_nProjectionType)
+		{
+			if (m_rowSimulationParams.m_nProjectionType == ProjectionSelection4::PS4_ShortvecTranslation)
+			{
+				ar(m_rowSimulationParams.m_vCapsule.y, "radius", "Radius");
+				m_rowSimulationParams.m_vCapsule.x = 0;
+				m_rowSimulationParams.m_vCapsule.y = clamp_tpl(m_rowSimulationParams.m_vCapsule.y, 0.0f, 0.5f);
+			}
+			else
+			{
+				ar(JointName(m_rowSimulationParams.m_strDirTransJoint), "dirTransJoint", "Directional Translation Joint");
+				uint32 hasJointName = m_rowSimulationParams.m_strDirTransJoint.length();
+				if (hasJointName == 0)
+					ar(m_rowSimulationParams.m_vTranslationAxis, "translationAxis", "Translation Axis");
+				ar(m_rowSimulationParams.m_vCapsule, "capsule", "Capsule");
+				m_rowSimulationParams.m_vCapsule.x = clamp_tpl(m_rowSimulationParams.m_vCapsule.x, 0.0f, 2.0f);
+				m_rowSimulationParams.m_vCapsule.y = clamp_tpl(m_rowSimulationParams.m_vCapsule.y, 0.0f, 0.5f);
+			}
+
+			if (m_rowSimulationParams.m_nProjectionType)
+				ar(ProxySet(m_rowSimulationParams.m_arrProxyNames, m_definition), "proxyNames", "Available Collision Proxies");
+		}
+	}
+	else
+	{
+		ar(Serialization::Range(m_rowSimulationParams.m_nSimFPS, uint8(10), uint8(255)), "simulationFPS", "Simulation FPS");
+
+		ar(Serialization::Range(m_rowSimulationParams.m_fMass, 0.0001f, 10.0f), "mass", "Mass");
+		ar(Serialization::Range(m_rowSimulationParams.m_fGravity, -90.0f, 90.0f), "gravity", "Gravity");
+		ar(Serialization::Range(m_rowSimulationParams.m_fDamping, 0.0f, 10.0f), "damping", "Damping");
+		ar(Serialization::Range(m_rowSimulationParams.m_fJointSpring, 0.0f, 999.0f), "jointSpring", "Joint Spring");          //in the case of a pendulum its a joint-based force
+
+		ar(Serialization::Range(m_rowSimulationParams.m_fConeAngle, 0.0f, 179.0f), "coneAngle", "Cone Angle");
+		ar(m_rowSimulationParams.m_vConeRotation, "coneRotation", "Cone Rotation");
+		m_rowSimulationParams.m_vConeRotation.x = clamp_tpl(m_rowSimulationParams.m_vConeRotation.x, -179.0f, +179.0f);
+		m_rowSimulationParams.m_vConeRotation.y = clamp_tpl(m_rowSimulationParams.m_vConeRotation.y, -179.0f, +179.0f);
+		m_rowSimulationParams.m_vConeRotation.z = clamp_tpl(m_rowSimulationParams.m_vConeRotation.z, -179.0f, +179.0f);
+		ar(Serialization::Range(m_rowSimulationParams.m_fRodLength, 0.1f, 5.0f), "rodLength", "Rod Length");
+		ar(m_rowSimulationParams.m_vStiffnessTarget, "stiffnessTarget", "Spring Target");
+		m_rowSimulationParams.m_vStiffnessTarget.x = clamp_tpl(m_rowSimulationParams.m_vStiffnessTarget.x, -179.0f, +179.0f);
+		m_rowSimulationParams.m_vStiffnessTarget.y = clamp_tpl(m_rowSimulationParams.m_vStiffnessTarget.y, -179.0f, +179.0f);
+		ar(m_rowSimulationParams.m_vTurbulence, "turbulenceTarget", "Turbulence");
+		m_rowSimulationParams.m_vTurbulence.x = clamp_tpl(m_rowSimulationParams.m_vTurbulence.x, 0.0f, 2.0f);
+		m_rowSimulationParams.m_vTurbulence.y = clamp_tpl(m_rowSimulationParams.m_vTurbulence.y, 0.0f, 9.0f);
+		ar(Serialization::Range(m_rowSimulationParams.m_fMaxVelocity, 0.1f, 100.0f), "maxVelocity", "Max Velocity");
+
+		ar(m_rowSimulationParams.m_cycle, "cycle", "Cycle");
+		ar(Serialization::Range(m_rowSimulationParams.m_fStretch, 0.00f, 0.9f), "stretch", "Stretch");
+		ar(Serialization::Range(m_rowSimulationParams.m_relaxationLoops, 0u, 20u), "relaxationLoops", "Relax Loops");
+
+		ar(m_rowSimulationParams.m_vCapsule, "capsule", "Capsule");
+		m_rowSimulationParams.m_vCapsule.x = clamp_tpl(m_rowSimulationParams.m_vCapsule.x, 0.0f, 2.0f);
+		m_rowSimulationParams.m_vCapsule.y = clamp_tpl(m_rowSimulationParams.m_vCapsule.y, 0.0f, 0.5f);
+
+		if (ct == RowSimulationParams::PENDULUM_CONE || ct == RowSimulationParams::PENDULUM_HALF_CONE)
+			ar((ProjectionSelection1&)m_rowSimulationParams.m_nProjectionType, "projectionType", "Projection Type");
+		else
+			ar((ProjectionSelection2&)m_rowSimulationParams.m_nProjectionType, "projectionType", "Projection Type");
+
+		if (m_rowSimulationParams.m_nProjectionType)
+			ar(ProxySet(m_rowSimulationParams.m_arrProxyNames, m_definition), "proxyNames", "Available Collision Proxies");
+	}
+}
+
+void CharacterAttachment::SerializeVCloth(Serialization::IArchive& ar)
+{
+	if (ar.openBlock("vcloth-parameter", "+Parameter"))
+	{
+		// be careful: first parameter of parameter widget should not be within an 'openBlock()', otherwise following attachments would not be shown in the GUI
+		if (ar.openBlock("animation", "+Animation Control"))
+		{
+			ar(m_vclothParams.hide, "hide", "Hide");
+			ar(m_vclothParams.forceSkinning, "forceSkinning", "Force Skinning");
+			ar.doc("If enabled, simulation is skipped and skinning is always enforced.");
+			ar(Serialization::Range(m_vclothParams.forceSkinningFpsThreshold, 5.0f, std::numeric_limits<float>::max()), "forceSkinningFpsThreshold", "Force Skinning FPS Thresh");
+			ar.doc("If the framerate drops under the provided FPS, simulation is skipped and skinning is enforced.");
+			ar(Serialization::Range(m_vclothParams.forceSkinningTranslateThreshold, 0.0f, std::numeric_limits<float>::max()), "forceSkinningTranslateThreshold", "Force Skinning Translate Thresh");
+			ar.doc("If the translation exceeds the provided threshold, simulation is skipped and skinning is enforced.");
+			ar(m_vclothParams.checkAnimationRewind, "checkAnimationRewind", "Check Animation Rewind");
+			ar.doc("Reset particle positions to skinned positions, if a time-jump occurs in the animation (e.g., in case of animation rewind).");
+			ar(Serialization::Range(m_vclothParams.disableSimulationAtDistance, 0.0f, std::numeric_limits<float>::max()), "disableSimulationAtDistance", "Disable Simulation At Distance");
+			ar.doc("Disable simulation/enable skinning in dependance of camera distance.");
+			ar(Serialization::Range(m_vclothParams.disableSimulationTimeRange, 0.0f, 1.0f), "disableSimulationTimeRange", "Disable Simulation Time Range");
+			ar.doc("Defines the physical time [in seconds] which is used for fading between simulation and skinning, e.g., 0.5 implies half a second for fading.");
+			ar(Serialization::Range(m_vclothParams.enableSimulationSSaxisSizePerc, 0.0f, 1.0f), "enableSimulationSSaxisSizePerc", "Enable Simulation SS Size");
+			ar.doc("If the size of characters bounding box in screen space exceeds provided percentage of viewport size, simulation is enabled.\nThus, simulation can be controlled according to the characters actual size on screen. This value is used for x- and y-direction, separately.");
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("simulation", "+Simulation and Collision"))
+		{
+			ar(Serialization::Range(m_vclothParams.timeStep, 0.001f, 0.05f), "timeStep", "Time Step");
+			ar.doc("Simulation timestep.");
+			ar(Serialization::Range(m_vclothParams.timeStepsMax, 3, 999), "timeStepsMax", "Time Step Max Iterations");
+			ar.doc("Maximum number of iterations for the time discretization between two frames.");
+			ar(Serialization::Range(m_vclothParams.numIterations, 1, 100), "numIterations", "Coll./Stiffness Iterations");
+			ar.doc("Number of stiffness/collision iterations per timestep.");
+			ar(Serialization::Range(m_vclothParams.collideEveryNthStep, 0, 10), "collideEveryNthStep", "Collide Every n-th Step");
+			ar.doc("During stiffness/collision iterations, only execute collision resolve every n-th step. '0' disables collisions.");
+			ar(Serialization::Range(m_vclothParams.collisionMultipleShiftFactor, 0.0f, 1.0f), "collisionMultipleShiftFactor", "Multi-Collisions Shift Factor");
+			ar.doc("In case of multiple collisions at the same time, the particle is shifted by this factor into the average direction. '0.0' disables multiple-collision handling. At the moment a maximum of 2 simultaneous collisions is handled.");
+
+			ar(Serialization::Range(m_vclothParams.gravityFactor, -16.0f, 16.0f), "gravityFactor", "Gravity Factor");
+			ar.doc("Defines intensity of gravity.");
+
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("stiffness", "+Stiffness and Elasticity"))
+		{
+			ar(Serialization::Range(m_vclothParams.stretchStiffness, 0.0f, 10.0f), "stretchStiffness", "Stretch Stiffness");
+			ar.doc("Smaller values indicate less stiffness, larger values indicate stronger stiffness. (default value: 1.0)");
+			ar(Serialization::Range(m_vclothParams.shearStiffness, 0.0f, 1.0f), "shearStiffness", "Shear Stiffness");
+			ar.doc("Smaller values indicate less stiffness, larger values indicate stronger stiffness. (value: 0..1)");
+			ar(Serialization::Range(m_vclothParams.bendStiffness, 0.0f, 1.0f), "bendStiffness", "Bend Stiffness");
+			ar.doc("Smaller values indicate less stiffness, larger values indicate stronger stiffness. (value: 0..1)");
+
+			ar(Serialization::Range(m_vclothParams.bendStiffnessByTrianglesAngle, 0.0f, 1.0f), "bendStiffnessByTrianglesAngle", "Bend Stiffness By Angle");
+			ar.doc("Bend stiffness depending on triangle angles, thus, the stiffness is not affecting elasticity.");
+
+			ar(Serialization::Range(m_vclothParams.pullStiffness, 0.0f, 4.0f), "pullStiffness", "Pull Stiffness");
+			ar.doc("Strength of pulling pinched vertices towards skinned position. Also used for 'Max Skin Distance' (see below, value: 0..1)");
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("damping", "+Friction and Damping"))
+		{
+			ar(Serialization::Range(m_vclothParams.friction, 0.0f, 2.0f), "friction", "Friction");
+			ar.doc("Global friction. Recommended are values between 0.0 and 0.1");
+			ar(Serialization::Range(m_vclothParams.rigidDamping, 0.0f, 1.0f), "rigidDamping", "Rigid Damping");
+			ar.doc("Damping stiffness into rigid-body/stiff cloth. 0.0 represents no damping, 1.0 represents rigid cloth.");
+
+			// commented out for now, to keep GUI simple, ensure zeros for compatibility with old stored files
+			m_vclothParams.springDamping = 0;
+			m_vclothParams.springDampingPerSubstep = false;
+			m_vclothParams.collisionDampingTangential = 0;
+			//ar(Serialization::Range(m_vclothParams.springDamping, 0.0f, 1.0f), "springDamping", "Spring Damping");
+			//ar.doc("Damping factor of springs.");
+			//ar(m_vclothParams.springDampingPerSubstep, "springDampingPerSubstep", "Spring Damping Per Substep");
+			//ar.doc("Enable spring damping for each substep of the collision/stiffness solver.");
+			//ar(m_vclothParams.collisionDampingTangential, "collisionDampingTangential", "Collision Friction Tangential");
+			//ar.doc("Tangential friction for collided particles. Normal direction is preserved, if not pointing inwards.");
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("nearestNeighborDistanceConstraints", "+Nearest Neighbor Distance Constraints"))
+		{
+			ar(m_vclothParams.useNearestNeighborDistanceConstraints, "nearestNeighborDistanceConstraints", "Nearest Neighbor Distance Constraints");
+			ar.doc("Enables NNDC for improved stiffness, while reducing elasticity.");
+			ar(Serialization::Range(m_vclothParams.nndcMaximumShiftFactor, 0.0f, 0.8f), "nndcMaximumShiftFactor", "NNDC maximum shift factor");
+			ar.doc("Scales maximum shift per iteration in direction of closest neighbor, e.g. 0.5 -> half way to nearest neighbor. Smaller values result in higher stability.");
+			ar(Serialization::Range(m_vclothParams.nndcShiftCollisionFactor, -2.0f, 2.0f), "nndcShiftCollisionFactor", "NNDC shift collision factor");
+			ar.doc("Scales in case of shift the velocity, 0.0=no shift, 1.0=no velocity change, -1=increase velocity by change.");
+			ar(Serialization::Range(m_vclothParams.nndcAllowedExtension, 0.0f, 1.0f), "nndcAllowedExtension", "NNDC maximum allowed extension per neighbor");
+			ar.doc("Allowed extension for nndc, e.g. 0.1 = 10%");
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("other", "+Additional"))
+		{
+			// commented out for now, to keep GUI simple, ensure zeros for compatibility with old stored files
+			m_vclothParams.translationBlend = 0;
+			m_vclothParams.rotationBlend = 0;
+			m_vclothParams.externalBlend = 0;
+			//ar(m_vclothParams.translationBlend, "translationBlend", "Translation Blend");
+			//ar.doc("Blending factor between local and world space translation.");
+			//ar(m_vclothParams.rotationBlend, "rotationBlend", "Rotation Blend");
+			//ar.doc("Blending factor between local and world space rotation.");
+			//ar(m_vclothParams.externalBlend, "externalBlend", "External Blend");
+			//ar.doc("Blending factor of world transformation.");
+			ar(m_vclothParams.maxAnimDistance, "maxAnimDistance", "Max Skin Distance");
+			ar.doc("Maximum allowed particle distance from skinned position.");
+			ar(Serialization::Range(m_vclothParams.filterLaplace, 0.0f, 1.0f), "filterLaplace", "Mesh Filter Laplace");
+			ar.doc("Enables post-process laplace filter for the simulation mesh. Accept values between 0 and 1, whereas 0.0 means no filtering and 1.0 full filtering.");
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("ResetDamping", "+Reset Damping"))
+		{
+			ar(Serialization::Range(m_vclothParams.resetDampingRange, 0, 999), "resetDampingRange", "Reset Damping N Frames");
+			ar.doc("Damps particles velocity for N frames after reset, to prevent cloth from strong fluttering.");
+			ar(Serialization::Range(m_vclothParams.resetDampingFactor, 0.0f, 1.0f), "resetDampingFactor", "Reset Damping Factor");
+			ar.doc("Strength of initial damping.");
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("files", "+Files"))
+		{
+			ar(m_vclothParams.isMainCharacter, "isMainCharacter", "isMainCharacter");
+			ar(m_vclothParams.renderMeshName, "renderMeshName", "renderMeshName");
+			ar(ResourceFilePath(m_vclothParams.renderBinding, "Render Skin (.skin)|*.skin", "Characters"), "Binding", "Binding");
+			ar(m_vclothParams.simMeshName, "simMeshName", "simMeshName");
+			ar(ResourceFilePath(m_vclothParams.simBinding, "Simulation Skin (.skin)|*.skin", "Characters"), "simBinding", "simBinding");
+			ar(ResourceFilePath(m_vclothParams.material, "Materials (mtl)|*.mtl", "Materials"), "material", "material");
+			ar.closeBlock();
+		}
+
+		if (ar.openBlock("debug", "+Debug"))
+		{
+			ar(Serialization::Range(m_vclothParams.debugDrawVerticesRadius, 0.0f, 1.0f), "debugDrawVerticesRadius", "Draw Vertices Radius");
+			ar(Serialization::Range(m_vclothParams.debugDrawCloth, 0, std::numeric_limits<int>::max()), "debugDrawCloth", "Draw Cloth");
+			ar(Serialization::Range(m_vclothParams.debugDrawNndc, 0, std::numeric_limits<int>::max()), "debugDrawNNDC", "Draw Nearest Neighbor Distance Constraints");
+			ar(Serialization::Range(m_vclothParams.debugPrint, 0, std::numeric_limits<int>::max()), "debugPrint", "Debug");
+			ar.closeBlock();
+		}
+
+		if (m_vclothParams.hide)
+		{
+			ar.warning(*this, "Hidden by default.");
+		}
+
+		ar.closeBlock(); // close "vcloth-parameter"
+	}
+}
+
+
 void CharacterAttachment::Serialize(Serialization::IArchive& ar)
 {
-	using Serialization::Range;
-	using Serialization::LocalToJoint;
-	using Serialization::LocalToEntity;
-	using Serialization::LocalFrame;
-
 	Serialization::SContext attachmentContext(ar, this);
 
 	if (ar.isEdit() && ar.isOutput())
@@ -600,405 +1445,16 @@ void CharacterAttachment::Serialize(Serialization::IArchive& ar)
 	ar(m_attachmentType, "type", "Type");
 
 	stack_string oldGeometry = m_strGeometryFilepath;
-	if (m_attachmentType == CA_BONE)
+
+	switch (m_attachmentType)
 	{
-		ar(JointName(m_strJointName), "jointName", "Joint");
-
-		ar(ResourceFilePath(m_strGeometryFilepath, "Attachment Geometry (cgf, cga, chr, cdf)|*.cgf;*.cga;*chr;*.cdf", "Objects"), "geometry", "<Geometry");
-		ar(Serialization::MaterialPicker(m_strMaterial), "material", "<Material");
-		ar(m_viewDistanceMultiplier, "viewDistanceMultiplier", "View Distance Multiplier");
-
-		ar(m_positionSpace, "positionSpace", "Store Position");
-		ar(m_rotationSpace, "rotationSpace", "Store Rotation");
-		if (ar.isEdit())
-		{
-			const char* transformNamesBySpaces[] = { "transform_jj", "transform_jc", "transform_cj", "transform_cc" };
-			const char* transformName = transformNamesBySpaces[(int)m_rotationSpace * 2 + (int)m_positionSpace];
-			QuatT& abs = m_characterSpacePosition;
-			QuatT& rel = m_jointSpacePosition;
-			bool rotJointSpace = m_rotationSpace == SPACE_JOINT;
-			bool posJointSpace = m_positionSpace == SPACE_JOINT;
-			ar(LocalFrame(rotJointSpace ? &rel.q : &abs.q, rotJointSpace ? Serialization::SPACE_SOCKET_RELATIVE_TO_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
-			              posJointSpace ? &rel.t : &abs.t, posJointSpace ? Serialization::SPACE_SOCKET_RELATIVE_TO_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
-			              m_strSocketName.c_str(), this),
-			   transformName,
-			   "+Transform"
-			   );
-			abs.q.Normalize();
-			rel.q.Normalize();
-		}
-		else
-		{
-			if (m_rotationSpace == SPACE_JOINT)
-				ar(m_jointSpacePosition.q, "jointRotation", 0);
-			else
-				ar(m_characterSpacePosition.q, "characterRotation", 0);
-			if (m_positionSpace == SPACE_JOINT)
-				ar(m_jointSpacePosition.t, "jointPosition", 0);
-			else
-				ar(m_characterSpacePosition.t, "characterPosition", 0);
-		}
-
-		ar(m_simulationParams, "simulation", "+Simulation");
-
-		int availableFlags = FLAGS_ATTACH_HIDE_ATTACHMENT | FLAGS_ATTACH_PHYSICALIZED_RAYS | FLAGS_ATTACH_PHYSICALIZED_COLLISIONS;
-		BitFlags<AttachmentFlags>(m_nFlags, availableFlags).Serialize(ar);
-		if ((m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0)
-			ar.warning(*this, "Hidden by default.");
-
-		ar(m_jointPhysics, "jointPhysics", "Rope/Cloth Physics");
-	}
-
-	if (m_attachmentType == CA_FACE)
-	{
-		ar(ResourceFilePath(m_strGeometryFilepath, "Attachment Geometry (cgf, cga, chr, cdf)|*.cgf;*.cga;*chr;*.cdf", "Objects"), "geometry", "<Geometry");
-		ar(ResourceFilePath(m_strMaterial, "Materials (mtl)|*.mtl", "Materials"), "material", "<Material");
-		ar(m_viewDistanceMultiplier, "viewDistanceMultiplier", "View Distance Multiplier");
-
-		if (ar.isInput())
-		{
-			m_positionSpace = SPACE_CHARACTER;
-			m_rotationSpace = SPACE_CHARACTER;
-		}
-		QuatT& abs = m_characterSpacePosition;
-		ar(LocalFrame(&abs.q, Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE, &abs.t, Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE, m_strSocketName.c_str(), this),
-		   "characterPosition",
-		   "+Transform"
-		   );
-		abs.q.Normalize();
-
-		if (ar.isEdit())
-			ar(m_jointSpacePosition, "jointPosition", 0);
-
-		ar(m_simulationParams, "simulation", "+Simulation");
-		if (m_simulationParams.m_nClampType == SimulationParams::TRANSLATIONAL_PROJECTION)
-			m_simulationParams.m_nClampType = SimulationParams::DISABLED; //you can't choose this mode on face attachments
-
-		int availableFlags = FLAGS_ATTACH_HIDE_ATTACHMENT | FLAGS_ATTACH_PHYSICALIZED_RAYS | FLAGS_ATTACH_PHYSICALIZED_COLLISIONS;
-		BitFlags<AttachmentFlags>(m_nFlags, availableFlags).Serialize(ar);
-		if ((m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0)
-			ar.warning(*this, "Hidden by default.");
-	}
-
-	if (m_attachmentType == CA_SKIN)
-	{
-		ar(ResourceFilePath(m_strGeometryFilepath, "Attachment Geometry (skin)|*.skin", "Objects"), "geometry", "<Geometry");
-		ar(ResourceFilePath(m_strMaterial, "Materials (mtl)|*.mtl", "Materials"), "material", "<Material");
-		ar(m_viewDistanceMultiplier, "viewDistanceMultiplier", "View Distance Multiplier");
-
-		int availableFlags = FLAGS_ATTACH_HIDE_ATTACHMENT;
-		{
-			SkinningMethod skinningMethod = SKINNING_VERTEX_SHADER;
-			if (m_nFlags & FLAGS_ATTACH_SW_SKINNING)
-				skinningMethod = SKINNING_CPU;
-			else if (m_nFlags & FLAGS_ATTACH_COMPUTE_SKINNING)
-			{
-				skinningMethod = SKINNING_COMPUTE_SHADER;
-				availableFlags |= FLAGS_ATTACH_COMPUTE_SKINNING_PREMORPHS | FLAGS_ATTACH_COMPUTE_SKINNING_TANGENTS;
-			}
-
-			ar(skinningMethod, "skinningMethod", "Skinning Method");
-
-			m_nFlags &= ~(FLAGS_ATTACH_SW_SKINNING | FLAGS_ATTACH_COMPUTE_SKINNING);
-			switch (skinningMethod)
-			{
-			case SKINNING_VERTEX_SHADER:
-				break;
-			case SKINNING_CPU:
-				m_nFlags |= FLAGS_ATTACH_SW_SKINNING;
-				break;
-			case SKINNING_COMPUTE_SHADER:
-				m_nFlags |= FLAGS_ATTACH_COMPUTE_SKINNING;
-				break;
-			}
-		}
-
-		BitFlags<AttachmentFlags>(m_nFlags, availableFlags).Serialize(ar);
-
-		if ((m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0)
-			ar.warning(*this, "Hidden by default.");
-
-		ar(m_positionSpace, "positionSpace", 0);
-		ar(m_rotationSpace, "rotationSpace", 0);
-		ar(m_jointSpacePosition, "relativeJointPosition", 0);
-		ar(m_characterSpacePosition, "relativeCharacterPosition", 0);
-	}
-
-	if (m_attachmentType == CA_PROX)
-	{
-		ar(JointName(m_strJointName), "jointName", "Joint");
-
-		ar(m_positionSpace, "positionSpace", "Store Position");
-		ar(m_rotationSpace, "rotationSpace", "Store Rotation");
-		if (ar.isEdit())
-		{
-			const char* transformNamesBySpaces[] = { "transform_jj", "transform_jc", "transform_cj", "transform_cc" };
-			const char* transformName = transformNamesBySpaces[(int)m_rotationSpace * 2 + (int)m_positionSpace];
-			QuatT& abs = m_characterSpacePosition;
-			QuatT& rel = m_jointSpacePosition;
-			bool rotJointSpace = m_rotationSpace == SPACE_JOINT;
-			bool posJointSpace = m_positionSpace == SPACE_JOINT;
-			ar(LocalFrame(rotJointSpace ? &rel.q : &abs.q, rotJointSpace ? Serialization::SPACE_SOCKET_RELATIVE_TO_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
-			              posJointSpace ? &rel.t : &abs.t, posJointSpace ? Serialization::SPACE_SOCKET_RELATIVE_TO_JOINT : Serialization::SPACE_SOCKET_RELATIVE_TO_BINDPOSE,
-			              m_strSocketName.c_str(), this), transformName, "+Transform");
-			abs.q.Normalize();
-			rel.q.Normalize();
-		}
-		else
-		{
-			if (m_rotationSpace == SPACE_JOINT)
-				ar(m_jointSpacePosition.q, "jointRotation", 0);
-			else
-				ar(m_characterSpacePosition.q, "characterRotation", 0);
-			if (m_positionSpace == SPACE_JOINT)
-				ar(m_jointSpacePosition.t, "jointPosition", 0);
-			else
-				ar(m_characterSpacePosition.t, "characterPosition", 0);
-		}
-
-		ar(m_ProxyPurpose, "proxyPurpose", "Purpose");
-
-		if (ar.openBlock("lozenge", "+Lozenge"))
-		{
-			ar.doc("The Lozenge collision primitive is defined by 4 numbers.\n"
-			       "With these 4 numbers, points, spheres, capsules, line-segments,\n"
-			       "rectangles, boxes, 2D-Lozenges and 3D-Lozenges can be created.\n"
-			       "That is 8 different shapes (and everything in-between) that can be\n"
-			       "used to approximate the shape of arms, legs and the torso of a human body.\n"
-			       "If all numbers are non-zero, the shape is a box with edge lengths defined\n"
-			       "by \"Size/X/Y/Z\" and a rounded border with a width defined by \"Border Width\".");
-			ar(Serialization::Range(m_ProxyParams.w, 0.0f, 1.0f), "borderWidth", "Border Width");
-			ar.doc("The width of the rounded border around the box of extends defined below. "
-			       "If no XYZ is set, this is the radius of a sphere.");
-			ar(Serialization::RadiusWithRangeAsDiameter(m_ProxyParams.x, 0.0f, 1.0f), "sizeX", "Size X");
-			ar.doc("The size of the box in the X dimension without the border.");
-			ar(Serialization::RadiusWithRangeAsDiameter(m_ProxyParams.y, 0.0f, 1.0f), "sizeY", "Size Y");
-			ar.doc("The size of the box in the Y dimension without the border.");
-			ar(Serialization::RadiusWithRangeAsDiameter(m_ProxyParams.z, 0.0f, 1.0f), "sizeZ", "Size Z");
-			ar.doc("The size of the box in the Z dimension without the border.");
-			ar.closeBlock();
-		}
-	}
-
-	if (m_attachmentType == CA_PROW)
-	{
-		ar(JointName(m_strRowJointName), "rowJointName", "Row Joint Name");
-
-		ar(m_rowSimulationParams.m_nClampMode, "clampMode", "Clamp Mode");
-		ar(m_rowSimulationParams.m_useDebugSetup, "useDebug", "Debug Setup                                                           ");
-		ar(m_rowSimulationParams.m_useDebugText, "useDebugText", "Debug Text                                                            ");
-		ar(m_rowSimulationParams.m_useSimulation, "useSimulation", "Activate Simulation                                                   ");
-
-		RowSimulationParams::ClampMode ct = m_rowSimulationParams.m_nClampMode;
-		if (ct == RowSimulationParams::TRANSLATIONAL_PROJECTION)
-		{
-			ar((ProjectionSelection4&)m_rowSimulationParams.m_nProjectionType, "projectionType", "Projection Type");
-			if (m_rowSimulationParams.m_nProjectionType)
-			{
-				if (m_rowSimulationParams.m_nProjectionType == ProjectionSelection4::PS4_ShortvecTranslation)
-				{
-					ar(m_rowSimulationParams.m_vCapsule.y, "radius", "Radius");
-					m_rowSimulationParams.m_vCapsule.x = 0;
-					m_rowSimulationParams.m_vCapsule.y = clamp_tpl(m_rowSimulationParams.m_vCapsule.y, 0.0f, 0.5f);
-				}
-				else
-				{
-					ar(JointName(m_rowSimulationParams.m_strDirTransJoint), "dirTransJoint", "Directional Translation Joint");
-					uint32 hasJointName = m_rowSimulationParams.m_strDirTransJoint.length();
-					if (hasJointName == 0)
-						ar(m_rowSimulationParams.m_vTranslationAxis, "translationAxis", "Translation Axis");
-					ar(m_rowSimulationParams.m_vCapsule, "capsule", "Capsule");
-					m_rowSimulationParams.m_vCapsule.x = clamp_tpl(m_rowSimulationParams.m_vCapsule.x, 0.0f, 2.0f);
-					m_rowSimulationParams.m_vCapsule.y = clamp_tpl(m_rowSimulationParams.m_vCapsule.y, 0.0f, 0.5f);
-				}
-
-				if (m_rowSimulationParams.m_nProjectionType)
-					ar(ProxySet(m_rowSimulationParams.m_arrProxyNames, m_definition), "proxyNames", "Available Collision Proxies");
-			}
-		}
-		else
-		{
-			ar(Serialization::Range(m_rowSimulationParams.m_nSimFPS, uint8(10), uint8(255)), "simulationFPS", "Simulation FPS");
-
-			ar(Serialization::Range(m_rowSimulationParams.m_fMass, 0.0001f, 10.0f), "mass", "Mass");
-			ar(Serialization::Range(m_rowSimulationParams.m_fGravity, -90.0f, 90.0f), "gravity", "Gravity");
-			ar(Serialization::Range(m_rowSimulationParams.m_fDamping, 0.0f, 10.0f), "damping", "Damping");
-			ar(Serialization::Range(m_rowSimulationParams.m_fJointSpring, 0.0f, 999.0f), "jointSpring", "Joint Spring");          //in the case of a pendulum its a joint-based force
-
-			ar(Serialization::Range(m_rowSimulationParams.m_fConeAngle, 0.0f, 179.0f), "coneAngle", "Cone Angle");
-			ar(m_rowSimulationParams.m_vConeRotation, "coneRotation", "Cone Rotation");
-			m_rowSimulationParams.m_vConeRotation.x = clamp_tpl(m_rowSimulationParams.m_vConeRotation.x, -179.0f, +179.0f);
-			m_rowSimulationParams.m_vConeRotation.y = clamp_tpl(m_rowSimulationParams.m_vConeRotation.y, -179.0f, +179.0f);
-			m_rowSimulationParams.m_vConeRotation.z = clamp_tpl(m_rowSimulationParams.m_vConeRotation.z, -179.0f, +179.0f);
-			ar(Serialization::Range(m_rowSimulationParams.m_fRodLength, 0.1f, 5.0f), "rodLength", "Rod Length");
-			ar(m_rowSimulationParams.m_vStiffnessTarget, "stiffnessTarget", "Spring Target");
-			m_rowSimulationParams.m_vStiffnessTarget.x = clamp_tpl(m_rowSimulationParams.m_vStiffnessTarget.x, -179.0f, +179.0f);
-			m_rowSimulationParams.m_vStiffnessTarget.y = clamp_tpl(m_rowSimulationParams.m_vStiffnessTarget.y, -179.0f, +179.0f);
-			ar(m_rowSimulationParams.m_vTurbulence, "turbulenceTarget", "Turbulence");
-			m_rowSimulationParams.m_vTurbulence.x = clamp_tpl(m_rowSimulationParams.m_vTurbulence.x, 0.0f, 2.0f);
-			m_rowSimulationParams.m_vTurbulence.y = clamp_tpl(m_rowSimulationParams.m_vTurbulence.y, 0.0f, 9.0f);
-			ar(Serialization::Range(m_rowSimulationParams.m_fMaxVelocity, 0.1f, 100.0f), "maxVelocity", "Max Velocity");
-
-			ar(m_rowSimulationParams.m_cycle, "cycle", "Cycle");
-			ar(Serialization::Range(m_rowSimulationParams.m_fStretch, 0.00f, 0.9f), "stretch", "Stretch");
-			ar(Serialization::Range(m_rowSimulationParams.m_relaxationLoops, 0u, 20u), "relaxationLoops", "Relax Loops");
-
-			ar(m_rowSimulationParams.m_vCapsule, "capsule", "Capsule");
-			m_rowSimulationParams.m_vCapsule.x = clamp_tpl(m_rowSimulationParams.m_vCapsule.x, 0.0f, 2.0f);
-			m_rowSimulationParams.m_vCapsule.y = clamp_tpl(m_rowSimulationParams.m_vCapsule.y, 0.0f, 0.5f);
-
-			if (ct == RowSimulationParams::PENDULUM_CONE || ct == RowSimulationParams::PENDULUM_HALF_CONE)
-				ar((ProjectionSelection1&)m_rowSimulationParams.m_nProjectionType, "projectionType", "Projection Type");
-			else
-				ar((ProjectionSelection2&)m_rowSimulationParams.m_nProjectionType, "projectionType", "Projection Type");
-
-			if (m_rowSimulationParams.m_nProjectionType)
-				ar(ProxySet(m_rowSimulationParams.m_arrProxyNames, m_definition), "proxyNames", "Available Collision Proxies");
-		}
-
-	}
-
-	if (m_attachmentType == CA_VCLOTH)
-	{
-		if (ar.openBlock("vcloth-parameter", "+Parameter"))
-		{
-			// be careful: first parameter of parameter widget should not be within an 'openBlock()', otherwise following attachments would not be shown in the GUI
-			if (ar.openBlock("animation", "+Animation Control"))
-			{
-				ar(m_vclothParams.forceSkinning, "forceSkinning", "Force Skinning");
-				ar.doc("If enabled, simulation is skipped and skinning is always enforced.");
-				ar(Serialization::Range(m_vclothParams.forceSkinningFpsThreshold, 5.0f, std::numeric_limits<float>::max()), "forceSkinningFpsThreshold", "Force Skinning FPS Thresh");
-				ar.doc("If the framerate drops under the provided FPS, simulation is skipped and skinning is enforced.");
-				ar(Serialization::Range(m_vclothParams.forceSkinningTranslateThreshold, 0.0f, std::numeric_limits<float>::max()), "forceSkinningTranslateThreshold", "Force Skinning Translate Thresh");
-				ar.doc("If the translation exceeds the provided threshold, simulation is skipped and skinning is enforced.");
-				ar(m_vclothParams.checkAnimationRewind, "checkAnimationRewind", "Check Animation Rewind");
-				ar.doc("Reset particle positions to skinned positions, if a time-jump occurs in the animation (e.g., in case of animation rewind).");
-				ar(Serialization::Range(m_vclothParams.disableSimulationAtDistance, 0.0f, std::numeric_limits<float>::max()), "disableSimulationAtDistance", "Disable Simulation At Distance");
-				ar.doc("Disable simulation/enable skinning in dependance of camera distance.");
-				ar(Serialization::Range(m_vclothParams.disableSimulationTimeRange, 0.0f, 1.0f), "disableSimulationTimeRange", "Disable Simulation Time Range");
-				ar.doc("Defines the physical time [in seconds] which is used for fading between simulation and skinning, e.g., 0.5 implies half a second for fading.");
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("simulation", "+Simulation and Collision"))
-			{
-				ar(Serialization::Range(m_vclothParams.timeStep, 0.001f, 0.05f), "timeStep", "Time Step");
-				ar.doc("Simulation timestep.");
-				ar(Serialization::Range(m_vclothParams.timeStepsMax, 3, 999), "timeStepsMax", "Time Step Max Iterations");
-				ar.doc("Maximum number of iterations for the time discretization between two frames.");
-				ar(Serialization::Range(m_vclothParams.numIterations, 1, 100), "numIterations", "Coll./Stiffness Iterations");
-				ar.doc("Number of stiffness/collision iterations per timestep.");
-				ar(Serialization::Range(m_vclothParams.collideEveryNthStep, 0, 10), "collideEveryNthStep", "Collide Every n-th Step");
-				ar.doc("During stiffness/collision iterations, only execute collision resolve every n-th step. '0' disables collisions.");
-				ar(Serialization::Range(m_vclothParams.collisionMultipleShiftFactor, 0.0f, 1.0f), "collisionMultipleShiftFactor", "Multi-Collisions Shift Factor");
-				ar.doc("In case of multiple collisions at the same time, the particle is shifted by this factor into the average direction. '0.0' disables multiple-collision handling. At the moment a maximum of 2 simultaneous collisions is handled.");
-
-				ar(Serialization::Range(m_vclothParams.gravityFactor, -16.0f, 16.0f), "gravityFactor", "Gravity Factor");
-				ar.doc("Defines intensity of gravity.");
-
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("stiffness", "+Stiffness and Elasticity"))
-			{
-				ar(Serialization::Range(m_vclothParams.stretchStiffness, 0.0f, 10.0f), "stretchStiffness", "Stretch Stiffness");
-				ar.doc("Smaller values indicate less stiffness, larger values indicate stronger stiffness. (default value: 1.0)");
-				ar(Serialization::Range(m_vclothParams.shearStiffness, 0.0f, 1.0f), "shearStiffness", "Shear Stiffness");
-				ar.doc("Smaller values indicate less stiffness, larger values indicate stronger stiffness. (value: 0..1)");
-				ar(Serialization::Range(m_vclothParams.bendStiffness, 0.0f, 1.0f), "bendStiffness", "Bend Stiffness");
-				ar.doc("Smaller values indicate less stiffness, larger values indicate stronger stiffness. (value: 0..1)");
-
-				ar(Serialization::Range(m_vclothParams.bendStiffnessByTrianglesAngle, 0.0f, 1.0f), "bendStiffnessByTrianglesAngle", "Bend Stiffness By Angle");
-				ar.doc("Bend stiffness depending on triangle angles, thus, the stiffness is not affecting elasticity.");
-
-				ar(Serialization::Range(m_vclothParams.pullStiffness, 0.0f, 4.0f), "pullStiffness", "Pull Stiffness");
-				ar.doc("Strength of pulling pinched vertices towards skinned position. Also used for 'Max Skin Distance' (see below, value: 0..1)");
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("damping", "+Friction and Damping"))
-			{
-				ar(Serialization::Range(m_vclothParams.friction, 0.0f, 2.0f), "friction", "Friction");
-				ar.doc("Global friction. Recommended are values between 0.0 and 0.1");
-				ar(Serialization::Range(m_vclothParams.rigidDamping, 0.0f, 1.0f), "rigidDamping", "Rigid Damping");
-				ar.doc("Damping stiffness into rigid-body/stiff cloth. 0.0 represents no damping, 1.0 represents rigid cloth.");
-
-				// commented out for now, to keep GUI simple, ensure zeros for compatibility with old stored files
-				m_vclothParams.springDamping = 0;
-				m_vclothParams.springDampingPerSubstep = false;
-				m_vclothParams.collisionDampingTangential = 0;
-				//ar(Serialization::Range(m_vclothParams.springDamping, 0.0f, 1.0f), "springDamping", "Spring Damping");
-				//ar.doc("Damping factor of springs.");
-				//ar(m_vclothParams.springDampingPerSubstep, "springDampingPerSubstep", "Spring Damping Per Substep");
-				//ar.doc("Enable spring damping for each substep of the collision/stiffness solver.");
-				//ar(m_vclothParams.collisionDampingTangential, "collisionDampingTangential", "Collision Friction Tangential");
-				//ar.doc("Tangential friction for collided particles. Normal direction is preserved, if not pointing inwards.");
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("longrangeattachments", "+Long Range Attachments"))
-			{
-				ar(m_vclothParams.longRangeAttachments, "longRangeAttachments", "Long Range Attachments");
-				ar.doc("Enables LRA for improved stiffness, while reducing elasticity.");
-				ar(Serialization::Range(m_vclothParams.longRangeAttachmentsMaximumShiftFactor, 0.0f, 0.8f), "longRangeAttachmentsMaximumShiftFactor", "LRA maximum shift factor");
-				ar.doc("Scales maximum shift per iteration in direction of closest neighbor, e.g. 0.5 -> half way to closest neighbor. Smaller values result in higher stability.");
-				ar(Serialization::Range(m_vclothParams.longRangeAttachmentsShiftCollisionFactor, -2.0f, 2.0f), "longRangeAttachmentsShiftCollisionFactor", "LRA shift collision factor");
-				ar.doc("Scales in case of shift the velocity, 0.0=no shift, 1.0=no velocity change, -1=increase velocity by change.");
-				ar(Serialization::Range(m_vclothParams.longRangeAttachmentsAllowedExtension, 0.0f, 1.0f), "longRangeAttachmentsAllowedExtension", "LRA allowed extension");
-				ar.doc("Allowed extension for Long Range Attachments, e.g. 0.1 = 10%");
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("other", "+Additional"))
-			{
-				// commented out for now, to keep GUI simple, ensure zeros for compatibility with old stored files
-				m_vclothParams.translationBlend = 0;
-				m_vclothParams.rotationBlend = 0;
-				m_vclothParams.externalBlend = 0;
-				//ar(m_vclothParams.translationBlend, "translationBlend", "Translation Blend");
-				//ar.doc("Blending factor between local and world space translation.");
-				//ar(m_vclothParams.rotationBlend, "rotationBlend", "Rotation Blend");
-				//ar.doc("Blending factor between local and world space rotation.");
-				//ar(m_vclothParams.externalBlend, "externalBlend", "External Blend");
-				//ar.doc("Blending factor of world transformation.");
-				ar(m_vclothParams.maxAnimDistance, "maxAnimDistance", "Max Skin Distance");
-				ar.doc("Maximum allowed particle distance from skinned position.");
-				ar(Serialization::Range(m_vclothParams.filterLaplace, 0.0f, 1.0f), "filterLaplace", "Mesh Filter Laplace");
-				ar.doc("Enables post-process laplace filter for the simulation mesh. Accept values between 0 and 1, whereas 0.0 means no filtering and 1.0 full filtering.");
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("ResetDamping", "+Reset Damping"))
-			{
-				ar(Serialization::Range(m_vclothParams.resetDampingRange, 0, 999), "resetDampingRange", "Reset Damping N Frames");
-				ar.doc("Damps particles velocity for N frames after reset, to prevent cloth from strong fluttering.");
-				ar(Serialization::Range(m_vclothParams.resetDampingFactor, 0.0f, 1.0f), "resetDampingFactor", "Reset Damping Factor");
-				ar.doc("Strength of initial damping.");
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("files", "+Files"))
-			{
-				ar(m_vclothParams.isMainCharacter, "isMainCharacter", "isMainCharacter");
-				ar(m_vclothParams.renderMeshName, "renderMeshName", "renderMeshName");
-				ar(ResourceFilePath(m_vclothParams.renderBinding, "Render Skin (.skin)|*.skin", "Characters"), "Binding", "Binding");
-				ar(m_vclothParams.simMeshName, "simMeshName", "simMeshName");
-				ar(ResourceFilePath(m_vclothParams.simBinding, "Simulation Skin (.skin)|*.skin", "Characters"), "simBinding", "simBinding");
-				ar(ResourceFilePath(m_vclothParams.material, "Materials (mtl)|*.mtl", "Materials"), "material", "material");
-				ar.closeBlock();
-			}
-
-			if (ar.openBlock("debug", "+Debug"))
-			{
-				ar(Serialization::Range(m_vclothParams.debugDrawVerticesRadius, 0.0f, 1.0f), "debugDrawVerticesRadius", "Draw Vertices Radius");
-				ar(Serialization::Range(m_vclothParams.debugDrawCloth,0, std::numeric_limits<int>::max()), "debugDrawCloth", "Draw Cloth");
-				ar(Serialization::Range(m_vclothParams.debugDrawLRA,0, std::numeric_limits<int>::max()), "debugDrawLRA", "Draw Long Range Attachments");
-				ar(Serialization::Range(m_vclothParams.debugPrint,0, std::numeric_limits<int>::max()), "debugPrint", "Debug");
-				ar.closeBlock();
-			}
-
-			ar.closeBlock(); // close "vcloth-parameter"
-		}
+	case CA_BONE:   SerializeBone(ar);   break;
+	case CA_FACE:   SerializeFace(ar);   break;
+	case CA_SKIN:   SerializeSkin(ar);   break;
+	case CA_PROX:   SerializeProxy(ar);  break;
+	case CA_PROW:   SerializePRow(ar);   break;
+	case CA_VCLOTH: SerializeVCloth(ar); break;
+	default:		assert(false && "Unknown Attachment Type"); break;
 	}
 
 	// Keep character/joint-space positions in sync. Important to run this with
@@ -1045,7 +1501,7 @@ void CharacterDefinition::Serialize(Serialization::IArchive& ar)
 {
 	Serialization::SContext definitionContext(ar, this);
 
-	ar(SkeletonPath(skeleton), "skeleton", "Skeleton");
+	ar(SkeletonOrCgaPath(skeleton), "skeleton", "Skeleton");
 	ar.doc("The main skeleton of this character. (it can optionally be extended using attachments of type 'skin')");
 	if (skeleton.empty())
 		ar.warning(skeleton, "A skeleton is required for every character.");
@@ -1054,12 +1510,33 @@ void CharacterDefinition::Serialize(Serialization::IArchive& ar)
 	// evgenya: .rig and .phys references are temporarily disabled
 	ar(CharacterPhysicsPath(physics), "physics", 0);
 	ar(CharacterRigPath(rig), "rig", 0);
+	bool physEditPrev = m_physEdit;
+	ar(m_physEdit, "physedit");
+	ar(m_physLod, "physlod");
 	ar(attachments, "attachments", "Attachments");
 	m_initialized = ar.context<ICharacterInstance>() != 0;
 
+	if (ar.isInput() && !m_physEdit && physEditPrev)
+	{
+		attachments.insert(attachments.end(), origBonePhysAtt.begin(), origBonePhysAtt.end());
+		m_physEdit = m_physNeedsApply = true;
+	}
+
 	if (ar.isInput())
+	{
 		for (size_t i = 0; i < attachments.size(); ++i)
-			attachments[i].m_definition = this;
+		{
+			CharacterAttachment& att = attachments[i];
+			att.m_definition = this;
+			if (att.m_attachmentType == CA_PROX && att.m_ProxyPurpose == CharacterAttachment::RAGDOLL && att.m_updateMirror && att.m_ProxyType != GEOM_TRIMESH && *att.m_strJointNameMirror)
+			{
+				att.m_updateMirror = false;
+				auto mirror = std::find_if(attachments.begin(), attachments.end(), 
+					[att](auto &att1) { return !strcmp(att.m_strJointNameMirror, att1.m_strSocketName.c_str() + 1) && att1.m_strSocketName[0] == '$'; });
+				MirrorAttachment(att, mirror == attachments.end() ? (attachments.push_back(CharacterAttachment()), attachments.back()) : *mirror);
+			}
+		}
+	}
 
 	if (attachments.empty())
 		ar.warning(attachments, "Add attachments to the skeleton to create character geometry.\nIf you want to see the skeleton: go to 'Display Options', 'Skeleton' and select 'Joints'.");
@@ -1096,7 +1573,6 @@ bool CharacterDefinition::LoadFromXml(const XmlNodeRef& root)
 		tagname(uint32 crc32, AttachmentTypes type, bool dsetup, bool dtext, bool active)
 		{
 			m_crc32 = crc32;
-			;
 			m_type = type;
 			m_dsetup = dsetup;
 			m_dtext = dtext;
@@ -1266,6 +1742,15 @@ bool CharacterDefinition::LoadFromXml(const XmlNodeRef& root)
 					}
 				}
 
+				if (ct == SimulationParams::PENDULUM_CONE || ct == SimulationParams::PENDULUM_HINGE_PLANE || ct == SimulationParams::PENDULUM_HALF_CONE || isSpring)
+				{
+					attach.m_simulationParams.SetBlendControlJointName( CCryName(nodeAttach->getAttr("A_BlendControlJointName")) );
+					int iAxis = 0;
+					nodeAttach->getAttr("A_BlendControlJointAxis", iAxis);
+					iAxis = clamp_tpl(iAxis, 0, 2);
+					attach.m_simulationParams.SetBlendControlAxis( static_cast<SimulationParams::EBlendControlJointAxisToUse>(iAxis) );
+				}
+
 				uint32 isProjection = 0;
 				nodeAttach->getAttr("P_Projection", isProjection);
 				if (isProjection)
@@ -1346,12 +1831,14 @@ bool CharacterDefinition::LoadFromXml(const XmlNodeRef& root)
 				if (Type == "CA_VCLOTH")
 				{
 					// Animation Control
+					nodeAttach->getAttr("hide", attach.m_vclothParams.hide);
 					nodeAttach->getAttr("forceSkinning", attach.m_vclothParams.forceSkinning);
 					nodeAttach->getAttr("forceSkinningFpsThreshold", attach.m_vclothParams.forceSkinningFpsThreshold);
 					nodeAttach->getAttr("forceSkinningTranslateThreshold", attach.m_vclothParams.forceSkinningTranslateThreshold);
 					nodeAttach->getAttr("checkAnimationRewind", attach.m_vclothParams.checkAnimationRewind);
 					nodeAttach->getAttr("disableSimulationAtDistance", attach.m_vclothParams.disableSimulationAtDistance);
 					nodeAttach->getAttr("disableSimulationTimeRange", attach.m_vclothParams.disableSimulationTimeRange);
+					nodeAttach->getAttr("enableSimulationSSaxisSizePerc", attach.m_vclothParams.enableSimulationSSaxisSizePerc);
 
 					// Simulation and Collision
 					nodeAttach->getAttr("timeStep", attach.m_vclothParams.timeStep);
@@ -1375,11 +1862,11 @@ bool CharacterDefinition::LoadFromXml(const XmlNodeRef& root)
 					nodeAttach->getAttr("springDampingPerSubstep", attach.m_vclothParams.springDampingPerSubstep);
 					nodeAttach->getAttr("collisionDampingTangential", attach.m_vclothParams.collisionDampingTangential);
 
-					// Long Range Attachments
-					nodeAttach->getAttr("longRangeAttachments", attach.m_vclothParams.longRangeAttachments);
-					nodeAttach->getAttr("longRangeAttachmentsAllowedExtension", attach.m_vclothParams.longRangeAttachmentsAllowedExtension);
-					nodeAttach->getAttr("longRangeAttachmentsMaximumShiftFactor", attach.m_vclothParams.longRangeAttachmentsMaximumShiftFactor);
-					nodeAttach->getAttr("longRangeAttachmentsShiftCollisionFactor", attach.m_vclothParams.longRangeAttachmentsShiftCollisionFactor);
+					// Nearest Neighbor Distance Constraints
+					nodeAttach->getAttr("nearestNeighborDistanceConstraints", attach.m_vclothParams.useNearestNeighborDistanceConstraints);
+					nodeAttach->getAttr("nndcAllowedExtension", attach.m_vclothParams.nndcAllowedExtension);
+					nodeAttach->getAttr("nndcMaximumShiftFactor", attach.m_vclothParams.nndcMaximumShiftFactor);
+					nodeAttach->getAttr("nndcShiftCollisionFactor", attach.m_vclothParams.nndcShiftCollisionFactor);
 
 					// Test Reset Damping
 					nodeAttach->getAttr("resetDampingFactor", attach.m_vclothParams.resetDampingFactor);
@@ -1401,15 +1888,14 @@ bool CharacterDefinition::LoadFromXml(const XmlNodeRef& root)
 					attach.m_vclothParams.material = nodeAttach->getAttr("Material");
 					nodeAttach->getAttr("debugDrawVerticesRadius", attach.m_vclothParams.debugDrawVerticesRadius);
 					nodeAttach->getAttr("debugDrawCloth", attach.m_vclothParams.debugDrawCloth);
-					nodeAttach->getAttr("debugDrawLRA", attach.m_vclothParams.debugDrawLRA);
+					nodeAttach->getAttr("debugDrawNNDC", attach.m_vclothParams.debugDrawNndc);
 					nodeAttach->getAttr("debugPrint", attach.m_vclothParams.debugPrint);
-
-					nodeAttach->getAttr("hide", attach.m_vclothParams.hide);
 				}
 
 				uint32 flags;
 				if (nodeAttach->getAttr("Flags", flags))
 					attach.m_nFlags = flags;
+
 				nodeAttach->getAttr("ViewDistRatio", attach.m_viewDistanceMultiplier);
 
 				attach.m_jointPhysics.LoadFromXml(nodeAttach);
@@ -1448,6 +1934,7 @@ bool CharacterDefinition::LoadFromXml(const XmlNodeRef& root)
 		if (!Serialization::LoadXmlNode(*modifiers, root))
 			return false;
 	}
+	m_physEdit = false;
 
 	return true;
 }
@@ -1697,6 +2184,9 @@ void CharacterDefinition::ExportSkinAttachment(const CharacterAttachment& attach
 
 void CharacterDefinition::ExportProxyAttachment(const CharacterAttachment& attach, XmlNodeRef nodeAttachments)
 {
+	if (attach.m_ProxyPurpose == CharacterAttachment::RAGDOLL)
+		return;
+
 	XmlNodeRef nodeAttach = gEnv->pSystem->CreateXmlNode("Attachment");
 	nodeAttachments->addChild(nodeAttach);
 
@@ -1813,12 +2303,14 @@ void CharacterDefinition::ExportVClothAttachment(const CharacterAttachment& atta
 		nodeAttach->setAttr("AName", attach.m_strSocketName);
 
 	// Animation Control
+	nodeAttach->setAttr("hide", attach.m_vclothParams.hide);
 	nodeAttach->setAttr("forceSkinning", attach.m_vclothParams.forceSkinning);
 	nodeAttach->setAttr("forceSkinningFpsThreshold", attach.m_vclothParams.forceSkinningFpsThreshold);
 	nodeAttach->setAttr("forceSkinningTranslateThreshold", attach.m_vclothParams.forceSkinningTranslateThreshold);
 	nodeAttach->setAttr("checkAnimationRewind", attach.m_vclothParams.checkAnimationRewind);
 	nodeAttach->setAttr("disableSimulationAtDistance", attach.m_vclothParams.disableSimulationAtDistance);
 	nodeAttach->setAttr("disableSimulationTimeRange", attach.m_vclothParams.disableSimulationTimeRange);
+	nodeAttach->setAttr("enableSimulationSSaxisSizePerc", attach.m_vclothParams.enableSimulationSSaxisSizePerc);
 
 	// Simulation and Collision
 	nodeAttach->setAttr("timeStep", attach.m_vclothParams.timeStep);
@@ -1842,11 +2334,11 @@ void CharacterDefinition::ExportVClothAttachment(const CharacterAttachment& atta
 	nodeAttach->setAttr("springDampingPerSubstep", attach.m_vclothParams.springDampingPerSubstep);
 	nodeAttach->setAttr("collisionDampingTangential", attach.m_vclothParams.collisionDampingTangential);
 
-	// Long Range Attachments
-	nodeAttach->setAttr("longRangeAttachments", attach.m_vclothParams.longRangeAttachments);
-	nodeAttach->setAttr("longRangeAttachmentsAllowedExtension", attach.m_vclothParams.longRangeAttachmentsAllowedExtension);
-	nodeAttach->setAttr("longRangeAttachmentsMaximumShiftFactor", attach.m_vclothParams.longRangeAttachmentsMaximumShiftFactor);
-	nodeAttach->setAttr("longRangeAttachmentsShiftCollisionFactor", attach.m_vclothParams.longRangeAttachmentsShiftCollisionFactor);
+	// Nearest Neighbor Distance Constraints
+	nodeAttach->setAttr("nearestNeighborDistanceConstraints", attach.m_vclothParams.useNearestNeighborDistanceConstraints);
+	nodeAttach->setAttr("nndcAllowedExtension", attach.m_vclothParams.nndcAllowedExtension);
+	nodeAttach->setAttr("nndcMaximumShiftFactor", attach.m_vclothParams.nndcMaximumShiftFactor);
+	nodeAttach->setAttr("nndcShiftCollisionFactor", attach.m_vclothParams.nndcShiftCollisionFactor);
 
 	// Test Reset Damping
 	nodeAttach->setAttr("resetDampingFactor", attach.m_vclothParams.resetDampingFactor);
@@ -1868,10 +2360,8 @@ void CharacterDefinition::ExportVClothAttachment(const CharacterAttachment& atta
 	nodeAttach->setAttr("Material", attach.m_vclothParams.material); // also store material in vCloth-node - otherwise material would be lost, while saving
 	nodeAttach->setAttr("debugDrawVerticesRadius", attach.m_vclothParams.debugDrawVerticesRadius);
 	nodeAttach->setAttr("debugDrawCloth", attach.m_vclothParams.debugDrawCloth);
-	nodeAttach->setAttr("debugDrawLRA", attach.m_vclothParams.debugDrawLRA);
+	nodeAttach->setAttr("debugDrawNNDC", attach.m_vclothParams.debugDrawNndc);
 	nodeAttach->setAttr("debugPrint", attach.m_vclothParams.debugPrint);
-
-	nodeAttach->setAttr("hide", attach.m_vclothParams.hide);
 }
 
 void CharacterDefinition::ExportSimulation(const CharacterAttachment& attach, XmlNodeRef nodeAttach)
@@ -1956,6 +2446,15 @@ void CharacterDefinition::ExportSimulation(const CharacterAttachment& attach, Xm
 			}
 		}
 
+		if (ct == SimulationParams::PENDULUM_CONE || ct == SimulationParams::PENDULUM_HINGE_PLANE || ct == SimulationParams::PENDULUM_HALF_CONE || ct == SimulationParams::SPRING_ELLIPSOID)
+		{
+			if (attach.m_simulationParams.GetBlendControlJointName().length() > 0)
+			{
+				nodeAttach->setAttr("A_BlendControlJointName", attach.m_simulationParams.GetBlendControlJointName().c_str());
+				nodeAttach->setAttr("A_BlendControlJointAxis", static_cast<int>(attach.m_simulationParams.GetBlendControlAxis()));
+			}
+		}
+
 		if (ct == SimulationParams::TRANSLATIONAL_PROJECTION)
 		{
 			nodeAttach->setAttr("P_Projection", (int&)attach.m_simulationParams.m_nClampType);
@@ -2001,6 +2500,7 @@ bool CharacterDefinition::Save(const char* filename)
 	if (!root)
 		return false;
 	bool result = root->saveToFile(filename);
+	SavePhysProxiesToCGF(PathUtil::GetGameFolder() + "/" + skeleton + (m_physLod ? ".ragdoll.cgf" : ".cgf"));
 	if (result)
 	{
 		GetIEditor()->RequestScriptReload(eReloadScriptsType_Entity);
@@ -2026,10 +2526,97 @@ static string NormalizeMaterialName(const char* materialName)
 	return result;
 }
 
-void CharacterDefinition::ApplyToCharacter(bool* skinSetChanged, ICharacterInstance* pICharacterInstance, ICharacterManager* characterManager, bool showDebug)
+void CharacterDefinition::ApplyPhysAttachments(ICharacterInstance* pICharacterInstance)
+{
+	IDefaultSkeleton& skel = pICharacterInstance->GetIDefaultSkeleton();
+	IGeomManager *pGeoman = gEnv->pPhysicalWorld->GetGeomManager();
+	for(int i = 0; i < skel.GetJointCount(); i++)
+		if (skel.GetJointPhysInfo(i, m_physLod)->pPhysGeom)
+		{
+			pGeoman->UnregisterGeometry(skel.GetJointPhysInfo(i, m_physLod)->pPhysGeom);
+			skel.GetJointPhysInfo(i, m_physLod)->pPhysGeom = nullptr;
+		}
+
+	int numAttachments = attachments.size();
+	for (int i = 0; i < numAttachments; ++i)
+	{
+		const CharacterAttachment& attachment = attachments[i];
+		if (attachment.m_attachmentType == CA_PROX && attachment.m_ProxyPurpose == CharacterAttachment::RAGDOLL)
+		{
+			if (IGeometry *pGeom = attachment.CreateProxyGeom())
+			{
+				CryBonePhysics& phys = *skel.GetJointPhysInfo(skel.GetJointIDByName(attachment.m_strJointName), m_physLod);
+				phys.pPhysGeom = pGeoman->RegisterGeometry(pGeom, attachment.m_submtlId);
+				pGeom->Release();
+				phys.flags = joint_no_gravity | joint_isolated_accelerations;
+				*(Vec3*)phys.min = DEG2RAD(Vec3(attachment.m_limits[0]));
+				*(Vec3*)phys.max = DEG2RAD(Vec3(attachment.m_limits[1]));
+				for(int j = 0; j < 3; j++)
+				{
+					phys.flags |= (angle0_locked << j) * isneg(phys.max[j] - phys.min[j] - 0.01f);
+					float unlim = 1 + isneg(gf_PI*1.999f - phys.max[j] + phys.min[j]);
+					phys.max[j] *= unlim; phys.min[j] *= unlim;
+				}
+				*(Vec3*)phys.damping = attachment.m_damping;
+				*(Vec3*)phys.spring_tension = attachment.m_tension;
+			}
+		}
+	}
+
+	int nRoots = 0, idummyRoot = -1;
+	for(int i = 0, j; i < skel.GetJointCount(); i++)	if (skel.GetJointPhysGeom(i, m_physLod)) 
+	{
+		for(j = skel.GetJointParentIDByID(i); j >= 0 && !skel.GetJointPhysGeom(j, m_physLod); j = skel.GetJointParentIDByID(j))
+			skel.GetJointPhysInfo(j, m_physLod)->flags = 0;
+		nRoots -= j >> 31;
+	}
+	// for skeleton consistency, if multiple phys roots are present, create a temp phys root at their closest common ancestor
+	if (nRoots > 1)
+	{
+		for(int i = 0, j; i < skel.GetJointCount(); i++)	if (skel.GetJointPhysGeom(i, m_physLod)) 
+		{
+			for(j = skel.GetJointParentIDByID(i); j >= 0 && !skel.GetJointPhysGeom(j, m_physLod); j = skel.GetJointParentIDByID(j))
+				;
+			if (j < 0) for(j = skel.GetJointParentIDByID(i); j >= 0; j = skel.GetJointParentIDByID(j))
+				if (++skel.GetJointPhysInfo(j, m_physLod)->flags == nRoots)
+				{
+					idummyRoot = j; break;
+				}
+			if (idummyRoot >= 0)
+				break;
+		}
+		CryBonePhysics& phys = *skel.GetJointPhysInfo(idummyRoot, m_physLod);
+		memset(&phys, 0, sizeof(CryBonePhysics));
+		((Matrix33*)phys.framemtx)->SetIdentity();
+		IGeomManager *pGeoman = gEnv->pPhysicalWorld->GetGeomManager();
+		primitives::sphere sph;
+		sph.center.zero(); sph.r = 0.01f;
+		phys.pPhysGeom = pGeoman->RegisterGeometry(pGeoman->CreatePrimitive(primitives::sphere::type, &sph));
+		phys.pPhysGeom->V = 0.03f;
+		phys.pPhysGeom->Ibody = Vec3(0.0005f);
+		phys.pPhysGeom->pGeom->SetForeignData(nullptr, -1);
+		phys.pPhysGeom->pGeom->Release();
+	}
+
+	for (int i = 0, j; i < numAttachments; ++i)
+	{	// apply 0-angles rotations last since they need full parent-child hierarchy with physicalization
+		const CharacterAttachment& att = attachments[i];
+		if (att.m_attachmentType == CA_PROX && att.m_ProxyPurpose == CharacterAttachment::RAGDOLL)
+		{	
+			int idx = skel.GetJointIDByName(att.m_strJointName);
+			for(j = skel.GetJointParentIDByID(idx); j >= 0 && !skel.GetJointPhysGeom(j, m_physLod); j = skel.GetJointParentIDByID(j))
+				;
+			*(Matrix33*)skel.GetJointPhysInfo(idx, m_physLod)->framemtx = Matrix33((j >= 0 ? !skel.GetDefaultAbsJointByID(j).q * skel.GetDefaultAbsJointByID(idx).q : Quat(IDENTITY)) * Quat(DEG2RAD(att.m_frame0)));
+		}
+	}
+	m_physNeedsApply = false;
+}
+
+void CharacterDefinition::ApplyToCharacter(bool* skinSetChanged, ICharacterInstance* pICharacterInstance, ICharacterManager* characterManager, bool showDebug, bool applyPhys)
 {
 	if (m_initialized == 0)
 		return; //no serialization, no update
+	applyPhys = applyPhys && m_physEdit;
 
 	IAttachmentManager* pIAttachmentManager = pICharacterInstance->GetIAttachmentManager();
 
@@ -2055,6 +2642,9 @@ void CharacterDefinition::ApplyToCharacter(bool* skinSetChanged, ICharacterInsta
 		const CharacterAttachment& attachment = attachments[i];
 		const char* strSocketName = attachment.m_strSocketName.c_str();
 		int index = pIAttachmentManager->GetIndexByName(strSocketName);
+
+		if (attachment.m_attachmentType == CA_PROX && attachment.m_ProxyPurpose == CharacterAttachment::RAGDOLL)
+			continue;
 
 		IAttachment* pIAttachment = pIAttachmentManager->GetInterfaceByIndex(index);
 		if (index < 0)
@@ -2167,10 +2757,7 @@ void CharacterDefinition::ApplyToCharacter(bool* skinSetChanged, ICharacterInsta
 		nMaskForDynamicFlags |= FLAGS_ATTACH_HIDE_MAIN_PASS;
 		nMaskForDynamicFlags |= FLAGS_ATTACH_HIDE_SHADOW_PASS;
 		nMaskForDynamicFlags |= FLAGS_ATTACH_HIDE_RECURSION;
-		nMaskForDynamicFlags |= FLAGS_ATTACH_NEAREST_NOFOV;
 		nMaskForDynamicFlags |= FLAGS_ATTACH_NO_BBOX_INFLUENCE;
-		nMaskForDynamicFlags |= FLAGS_ATTACH_COMBINEATTACHMENT;
-		nMaskForDynamicFlags |= FLAGS_ATTACH_MERGED_FOR_SHADOWS;
 		uint32 flags = pIAttachment->GetFlags() & nMaskForDynamicFlags;
 		pIAttachment->SetFlags(attachment.m_nFlags | flags);
 		pIAttachment->HideAttachment((attachment.m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0);
@@ -2179,6 +2766,9 @@ void CharacterDefinition::ApplyToCharacter(bool* skinSetChanged, ICharacterInsta
 		lowercaseAttachmentName.MakeLower(); // lowercase because the names in the list coming from the engine are lowercase
 		names.erase(std::remove(names.begin(), names.end(), lowercaseAttachmentName.c_str()), names.end());
 	}
+
+	if (applyPhys)
+		ApplyPhysAttachments(pICharacterInstance);
 
 	// remove attachments that weren't updated
 	for (size_t i = 0; i < names.size(); ++i)
@@ -2234,6 +2824,200 @@ void CharacterDefinition::ApplyToCharacter(bool* skinSetChanged, ICharacterInsta
 	m_initialized = true; //only the serialization code can set this to true.
 }
 
+void CharacterDefinition::LoadPhysProxiesFromCharacter(ICharacterInstance *character)
+{
+	IDefaultSkeleton& skel = character->GetIDefaultSkeleton();
+	origBonePhysAtt.clear();
+	attachments.erase(
+		std::remove_if(attachments.begin(), attachments.end(), [](const auto &att)->bool { return att.m_attachmentType == CA_PROX && att.m_ProxyPurpose == CharacterAttachment::RAGDOLL; }),
+		attachments.end());
+	for(int i = 0; i < skel.GetJointCount(); i++)
+		if (const phys_geometry *pPhys = skel.GetJointPhysGeom(i, m_physLod))
+		{
+			CharacterAttachment att;
+			att.m_strJointName = skel.GetJointNameByID(i);
+			att.m_strSocketName = string("$") + att.m_strJointName;
+			att.m_attachmentType = CA_PROX;
+			att.m_ProxyPurpose = CharacterAttachment::RAGDOLL;
+			att.m_rotationSpace = CharacterAttachment::SPACE_JOINT;
+			att.m_positionSpace = CharacterAttachment::SPACE_JOINT;
+			ProxyDimFromGeom(pPhys->pGeom, att.m_jointSpacePosition, att.m_ProxyParams);
+			att.m_prevProxyParams = att.m_ProxyParams;
+			att.m_ProxyType = att.m_prevProxyType = (geomtypes)pPhys->pGeom->GetType();
+			if (att.m_ProxyType == GEOM_TRIMESH)
+				(att.m_proxySrc = new CharacterAttachment::ProxySource)->m_proxyMesh = pPhys->pGeom;
+			att.m_meshSmooth = att.m_prevMeshSmooth = 0;
+			att.m_characterSpacePosition = (att.m_boneTrans = skel.GetDefaultAbsJointByID(i)) * att.m_jointSpacePosition;
+			const CryBonePhysics& bp = *skel.GetJointPhysInfo(i, m_physLod);
+			for(int l = 0; l < 2; l++) for(int j = 0; j < 3; j++)
+				att.m_limits[l][j] = (int)(min(180.0f, max(-180.0f, RAD2DEG(bp.min[l * 3 + j] * (~bp.flags >> j & 1)))) + 180) - 180;
+			att.m_damping = *(Vec3*)bp.damping;
+			att.m_tension = *(Vec3*)bp.spring_tension;
+			Quat q0 = Quat((Matrix33&)bp.framemtx[0][0]);
+			int j;
+			for(j = skel.GetJointParentIDByID(i); j >= 0 && !skel.GetJointPhysGeom(j, m_physLod); j = skel.GetJointParentIDByID(j))
+				;
+			if (j >= 0)
+				q0 = !skel.GetDefaultAbsJointByID(i).q * skel.GetDefaultAbsJointByID(j).q * q0;
+			att.m_frame0 = Ang3(q0);
+			for(j = 0; j < 3; j++)
+				att.m_frame0[j] = ((int)fabs(att.m_frame0[j] * 10) * 0.1f) * sgnnz(att.m_frame0[j]);
+			att.m_submtlId = pPhys->surface_idx;
+			att.UpdateMirrorInfo(i, skel);
+
+			attachments.push_back(att);
+			origBonePhysAtt.push_back(att);
+		}
+	m_physEdit = true;
+}
+
+void CharacterDefinition::SavePhysProxiesToCGF(const char* fname)
+{
+	IStatObj* pSkelObj = gEnv->p3DEngine->CreateStatObj();
+	pSkelObj->FreeIndexedMesh();
+	pSkelObj->SetMaterial(gEnv->p3DEngine->GetMaterialManager()->FindMaterial(materialPath));
+	for(int i = 0; i < attachments.size(); i++)
+	{
+		const CharacterAttachment& att = attachments[i];
+		if (att.m_attachmentType != CA_PROX || att.m_ProxyPurpose != CharacterAttachment::RAGDOLL)
+			continue;
+		IStatObj::SSubObject& subObj = pSkelObj->AddSubObject(gEnv->p3DEngine->CreateStatObj());
+		phys_geometry *pGeom = gEnv->pPhysicalWorld->GetGeomManager()->RegisterGeometry(att.CreateProxyGeom(), att.m_submtlId);
+		pGeom->pGeom->Release();
+		subObj.pStatObj->SetPhysGeom(pGeom);
+		subObj.pStatObj->SetBBoxMax(Vec3(0.1f));
+		subObj.name = att.m_strJointName;
+		subObj.properties.Format("%d %d %d %d %d %d %.3f %.3f %.3f %.3f %.3f %.3f %.2f %.2f %.2f",
+			att.m_limits[0].x, att.m_limits[0].y, att.m_limits[0].z, att.m_limits[1].x, att.m_limits[1].y, att.m_limits[1].z, 
+			att.m_tension.x, att.m_tension.y, att.m_tension.z, att.m_damping.x, att.m_damping.y, att.m_damping.z,
+			att.m_frame0.x, att.m_frame0.y, att.m_frame0.z);
+		subObj.pStatObj->SetGeoName(subObj.name);
+		subObj.pStatObj->SetProperties(subObj.properties);
+		subObj.bIdentityMatrix = 0;
+		subObj.tm = subObj.localTM = Matrix34(att.m_characterSpacePosition * att.m_jointSpacePosition.GetInverted());
+	}
+	if (pSkelObj->GetSubObjectCount())
+	{
+		string dir = fname;
+		dir.Truncate(min(dir.length(), dir.find_last_of('/')));
+		gEnv->pCryPak->MakeDir(dir);
+		if (!pSkelObj->SaveToCGF(fname))
+			gEnv->pLog->LogWarning("Failed to write character phys proxies to %s", fname);
+	}
+	pSkelObj->Release();
+	origBonePhysAtt.clear();
+	m_physEdit = false;
+}
+
+namespace
+{
+	void HelperCopySimulationParametersBase(SimulationParams& dst, SimulationParams const& src)
+	{
+		dst.m_useDebugSetup = src.m_useDebugSetup;
+		dst.m_useDebugText = src.m_useDebugText;
+		dst.m_useSimulation = src.m_useSimulation;
+		dst.m_useRedirect = src.m_useRedirect;
+
+		dst.m_vPivotOffset = src.m_vPivotOffset;
+		dst.m_vCapsule = src.m_vCapsule;
+		dst.m_nProjectionType = src.m_nProjectionType;
+		dst.m_arrProxyNames = src.m_arrProxyNames;
+		
+		dst.SetBlendControlJointName( src.GetBlendControlJointName() );
+		dst.SetBlendControlJointId( src.GetBlendControlJointId() );
+		dst.SetBlendControlAxis( src.GetBlendControlAxis() );
+	}
+
+	void HelperCopySimulationParametersPhysics(SimulationParams& dst, SimulationParams const& src)
+	{
+		dst.m_nSimFPS = src.m_nSimFPS;
+
+		dst.m_fMass = src.m_fMass;
+		dst.m_fGravity = src.m_fGravity;
+		dst.m_fDamping = src.m_fDamping;
+		dst.m_fStiffness = src.m_fStiffness;
+	}
+
+	void HelperCopySimulationParametersPendulum(SimulationParams& dst, SimulationParams const& src)
+	{
+		dst.m_fMaxAngle = src.m_fMaxAngle;
+		dst.m_vDiskRotation.x = src.m_vDiskRotation.x;
+		dst.m_vSimulationAxis = src.m_vSimulationAxis;
+		dst.m_vStiffnessTarget = src.m_vStiffnessTarget;
+		dst.m_strProcFunction = src.m_strProcFunction;
+	}
+
+	void HelperCopySimulationParametersSpring(SimulationParams& dst, SimulationParams const& src)
+	{
+		dst.m_fRadius = src.m_fRadius;
+		dst.m_vSphereScale = src.m_vSphereScale;
+		dst.m_vDiskRotation = src.m_vDiskRotation;
+		dst.m_vStiffnessTarget = src.m_vStiffnessTarget;
+		dst.m_strProcFunction = src.m_strProcFunction;
+		dst.m_vCapsule.x = 0;
+	}
+
+	void GetExistingBindingFilename(string& sDst, IAttachmentObject const* pIAttachmentObject)
+	{
+		if (!pIAttachmentObject) return;
+
+		if (IStatObj* statObj = pIAttachmentObject->GetIStatObj())
+		{
+			sDst = statObj->GetFilePath();
+		}
+		else if (ICharacterInstance* attachedCharacter = pIAttachmentObject->GetICharacterInstance())
+		{
+			sDst = attachedCharacter->GetFilePath();
+		}
+		else if (IAttachmentSkin* attachmentSkin = pIAttachmentObject->GetIAttachmentSkin())
+		{
+			if (ISkin* skin = attachmentSkin->GetISkin())
+				sDst = skin->GetModelFilePath();
+		}
+	}
+
+	void LoadBinding(IAttachment*& pIAttachment, string const& filepathGeometry, ICharacterManager* characterManager)
+	{
+		IAttachmentObject* pIAttachmentObject = pIAttachment->GetIAttachmentObject();
+
+		if (!filepathGeometry.empty())
+		{
+			string fileExt = PathUtil::GetExt(filepathGeometry.c_str());
+
+			bool IsCDF = (0 == stricmp(fileExt, "cdf"));
+			bool IsCHR = (0 == stricmp(fileExt, "chr"));
+			bool IsCGA = (0 == stricmp(fileExt, "cga"));
+			bool IsCGF = (0 == stricmp(fileExt, "cgf"));
+			if (IsCDF || IsCHR || IsCGA)
+			{
+				ICharacterInstance* pIChildCharacter = characterManager->CreateInstance(filepathGeometry.c_str(), CA_CharEditModel);
+				if (pIChildCharacter)
+				{
+					CSKELAttachment* pCharacterAttachment = new CSKELAttachment();
+					pCharacterAttachment->m_pCharInstance = pIChildCharacter;
+					pIAttachmentObject = (IAttachmentObject*)pCharacterAttachment;
+				}
+			}
+			if (IsCGF)
+			{
+				IStatObj* pIStatObj = gEnv->p3DEngine->LoadStatObj(filepathGeometry.c_str(), 0, 0, false);
+				if (pIStatObj)
+				{
+					CCGFAttachment* pStatAttachment = new CCGFAttachment();
+					pStatAttachment->pObj = pIStatObj;
+					pIAttachmentObject = (IAttachmentObject*)pStatAttachment;
+				}
+			}
+			if (pIAttachmentObject != pIAttachment->GetIAttachmentObject())
+				pIAttachment->AddBinding(pIAttachmentObject, nullptr, CA_CharEditModel);
+		}
+		else
+		{
+			pIAttachment->ClearBinding(CA_CharEditModel);
+		}
+	}
+}
+
 void CharacterDefinition::ApplyBoneAttachment(IAttachment* pIAttachment, ICharacterManager* characterManager, const CharacterAttachment& desc, ICharacterInstance* pICharacterInstance, bool showDebug) const
 {
 	if (pIAttachment == 0)
@@ -2250,60 +3034,11 @@ void CharacterDefinition::ApplyBoneAttachment(IAttachment* pIAttachment, ICharac
 
 		IAttachmentObject* pIAttachmentObject = pIAttachment->GetIAttachmentObject();
 		string existingBindingFilename;
-		if (pIAttachmentObject)
-		{
-			if (IStatObj* statObj = pIAttachmentObject->GetIStatObj())
-			{
-				existingBindingFilename = statObj->GetFilePath();
-			}
-			else if (ICharacterInstance* attachedCharacter = pIAttachmentObject->GetICharacterInstance())
-			{
-				existingBindingFilename = attachedCharacter->GetFilePath();
-			}
-			else if (IAttachmentSkin* attachmentSkin = pIAttachmentObject->GetIAttachmentSkin())
-			{
-				if (ISkin* skin = attachmentSkin->GetISkin())
-					existingBindingFilename = skin->GetModelFilePath();
-			}
-		}
+		GetExistingBindingFilename(existingBindingFilename, pIAttachmentObject);
 
 		if (stricmp(existingBindingFilename.c_str(), desc.m_strGeometryFilepath.c_str()) != 0)
 		{
-			if (!desc.m_strGeometryFilepath.empty())
-			{
-				string fileExt = PathUtil::GetExt(desc.m_strGeometryFilepath.c_str());
-
-				bool IsCDF = (0 == stricmp(fileExt, "cdf"));
-				bool IsCHR = (0 == stricmp(fileExt, "chr"));
-				bool IsCGA = (0 == stricmp(fileExt, "cga"));
-				bool IsCGF = (0 == stricmp(fileExt, "cgf"));
-				if (IsCDF || IsCHR || IsCGA)
-				{
-					ICharacterInstance* pIChildCharacter = characterManager->CreateInstance(desc.m_strGeometryFilepath.c_str(), CA_CharEditModel);
-					if (pIChildCharacter)
-					{
-						CSKELAttachment* pCharacterAttachment = new CSKELAttachment();
-						pCharacterAttachment->m_pCharInstance = pIChildCharacter;
-						pIAttachmentObject = (IAttachmentObject*)pCharacterAttachment;
-					}
-				}
-				if (IsCGF)
-				{
-					IStatObj* pIStatObj = gEnv->p3DEngine->LoadStatObj(desc.m_strGeometryFilepath.c_str(), 0, 0, false);
-					if (pIStatObj)
-					{
-						CCGFAttachment* pStatAttachment = new CCGFAttachment();
-						pStatAttachment->pObj = pIStatObj;
-						pIAttachmentObject = (IAttachmentObject*)pStatAttachment;
-					}
-				}
-				if (pIAttachmentObject != pIAttachment->GetIAttachmentObject())
-					pIAttachment->AddBinding(pIAttachmentObject, nullptr, CA_CharEditModel);
-			}
-			else
-			{
-				pIAttachment->ClearBinding(CA_CharEditModel);
-			}
+			LoadBinding(pIAttachment, desc.m_strGeometryFilepath, characterManager);
 		}
 
 		SimulationParams& ap = pIAttachment->GetSimulationParams();
@@ -2313,71 +3048,26 @@ void CharacterDefinition::ApplyBoneAttachment(IAttachment* pIAttachment, ICharac
 		ap.m_nClampType = desc.m_simulationParams.m_nClampType;
 		if (showDebug && (ap.m_nClampType == SimulationParams::PENDULUM_CONE || ap.m_nClampType == SimulationParams::PENDULUM_HINGE_PLANE || ap.m_nClampType == SimulationParams::PENDULUM_HALF_CONE))
 		{
-			ap.m_useDebugSetup = desc.m_simulationParams.m_useDebugSetup;
-			ap.m_useDebugText = desc.m_simulationParams.m_useDebugText;
-			ap.m_useSimulation = desc.m_simulationParams.m_useSimulation;
-			ap.m_useRedirect = desc.m_simulationParams.m_useRedirect;
-
-			ap.m_nSimFPS = desc.m_simulationParams.m_nSimFPS;
-			ap.m_fMaxAngle = desc.m_simulationParams.m_fMaxAngle;
-			ap.m_vDiskRotation.x = desc.m_simulationParams.m_vDiskRotation.x;
-
-			ap.m_fMass = desc.m_simulationParams.m_fMass;
-			ap.m_fGravity = desc.m_simulationParams.m_fGravity;
-			ap.m_fDamping = desc.m_simulationParams.m_fDamping;
-			ap.m_fStiffness = desc.m_simulationParams.m_fStiffness;
-
-			ap.m_vPivotOffset = desc.m_simulationParams.m_vPivotOffset;
-			ap.m_vSimulationAxis = desc.m_simulationParams.m_vSimulationAxis;
-			ap.m_vStiffnessTarget = desc.m_simulationParams.m_vStiffnessTarget;
-			ap.m_strProcFunction = desc.m_simulationParams.m_strProcFunction;
-
-			ap.m_vCapsule = desc.m_simulationParams.m_vCapsule;
-			ap.m_nProjectionType = desc.m_simulationParams.m_nProjectionType;
-			ap.m_arrProxyNames = desc.m_simulationParams.m_arrProxyNames;
+			HelperCopySimulationParametersBase(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersPhysics(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersPendulum(ap, desc.m_simulationParams);
 		}
 		if (showDebug && ap.m_nClampType == SimulationParams::SPRING_ELLIPSOID)
 		{
-			ap.m_useDebugSetup = desc.m_simulationParams.m_useDebugSetup;
-			ap.m_useDebugText = desc.m_simulationParams.m_useDebugText;
-			ap.m_useSimulation = desc.m_simulationParams.m_useSimulation;
-			ap.m_useRedirect = desc.m_simulationParams.m_useRedirect;
-			ap.m_nSimFPS = desc.m_simulationParams.m_nSimFPS;
-
-			ap.m_fRadius = desc.m_simulationParams.m_fRadius;
-			ap.m_vSphereScale = desc.m_simulationParams.m_vSphereScale;
-			ap.m_vDiskRotation = desc.m_simulationParams.m_vDiskRotation;
-
-			ap.m_fMass = desc.m_simulationParams.m_fMass;
-			ap.m_fGravity = desc.m_simulationParams.m_fGravity;
-			ap.m_fDamping = desc.m_simulationParams.m_fDamping;
-			ap.m_fStiffness = desc.m_simulationParams.m_fStiffness;
-
-			ap.m_vStiffnessTarget = desc.m_simulationParams.m_vStiffnessTarget;
-			ap.m_strProcFunction = desc.m_simulationParams.m_strProcFunction;
-
-			ap.m_nProjectionType = desc.m_simulationParams.m_nProjectionType;
-			ap.m_vCapsule = desc.m_simulationParams.m_vCapsule;
-			ap.m_vCapsule.x = 0;
-			ap.m_vPivotOffset = desc.m_simulationParams.m_vPivotOffset;
-			ap.m_arrProxyNames = desc.m_simulationParams.m_arrProxyNames;
+			HelperCopySimulationParametersBase(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersPhysics(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersSpring(ap, desc.m_simulationParams);
 		}
 		if (showDebug && ap.m_nClampType == SimulationParams::TRANSLATIONAL_PROJECTION)
 		{
-			ap.m_useDebugSetup = desc.m_simulationParams.m_useDebugSetup;
-			ap.m_useDebugText = desc.m_simulationParams.m_useDebugText;
-			ap.m_useSimulation = desc.m_simulationParams.m_useSimulation;
+			HelperCopySimulationParametersBase(ap, desc.m_simulationParams);
 			ap.m_useRedirect = 1;
-
-			ap.m_nProjectionType = desc.m_simulationParams.m_nProjectionType;
 			ap.m_strDirTransJoint = desc.m_simulationParams.m_strDirTransJoint;
 			ap.m_vSimulationAxis = desc.m_simulationParams.m_vSimulationAxis;
-
-			ap.m_vCapsule = desc.m_simulationParams.m_vCapsule;
 			if (ap.m_nProjectionType == ProjectionSelection4::PS4_ShortvecTranslation)
+			{
 				ap.m_vCapsule.x = 0;
-			ap.m_vPivotOffset = desc.m_simulationParams.m_vPivotOffset;
-			ap.m_arrProxyNames = desc.m_simulationParams.m_arrProxyNames;
+			}
 		}
 		pIAttachment->PostUpdateSimulationParams(bAttachmentSortingRequired, desc.m_strJointName.c_str());
 	}
@@ -2398,60 +3088,11 @@ void CharacterDefinition::ApplyFaceAttachment(IAttachment* pIAttachment, ICharac
 	{
 		IAttachmentObject* pIAttachmentObject = pIAttachment->GetIAttachmentObject();
 		string existingBindingFilename;
-		if (pIAttachmentObject)
-		{
-			if (IStatObj* statObj = pIAttachmentObject->GetIStatObj())
-			{
-				existingBindingFilename = statObj->GetFilePath();
-			}
-			else if (ICharacterInstance* attachedCharacter = pIAttachmentObject->GetICharacterInstance())
-			{
-				existingBindingFilename = attachedCharacter->GetFilePath();
-			}
-			else if (IAttachmentSkin* attachmentSkin = pIAttachmentObject->GetIAttachmentSkin())
-			{
-				if (ISkin* skin = attachmentSkin->GetISkin())
-					existingBindingFilename = skin->GetModelFilePath();
-			}
-		}
+		GetExistingBindingFilename(existingBindingFilename, pIAttachmentObject);
 
 		if (stricmp(existingBindingFilename.c_str(), desc.m_strGeometryFilepath.c_str()) != 0)
 		{
-			if (!desc.m_strGeometryFilepath.empty())
-			{
-				string fileExt = PathUtil::GetExt(desc.m_strGeometryFilepath.c_str());
-
-				bool IsCDF = (0 == stricmp(fileExt, "cdf"));
-				bool IsCHR = (0 == stricmp(fileExt, "chr"));
-				bool IsCGA = (0 == stricmp(fileExt, "cga"));
-				bool IsCGF = (0 == stricmp(fileExt, "cgf"));
-				if (IsCDF || IsCHR || IsCGA)
-				{
-					ICharacterInstance* pIChildCharacter = characterManager->CreateInstance(desc.m_strGeometryFilepath.c_str(), CA_CharEditModel);
-					if (pIChildCharacter)
-					{
-						CSKELAttachment* pCharacterAttachment = new CSKELAttachment();
-						pCharacterAttachment->m_pCharInstance = pIChildCharacter;
-						pIAttachmentObject = (IAttachmentObject*)pCharacterAttachment;
-					}
-				}
-				if (IsCGF)
-				{
-					IStatObj* pIStatObj = gEnv->p3DEngine->LoadStatObj(desc.m_strGeometryFilepath.c_str(), 0, 0, false);
-					if (pIStatObj)
-					{
-						CCGFAttachment* pStatAttachment = new CCGFAttachment();
-						pStatAttachment->pObj = pIStatObj;
-						pIAttachmentObject = (IAttachmentObject*)pStatAttachment;
-					}
-				}
-				if (pIAttachmentObject != pIAttachment->GetIAttachmentObject())
-					pIAttachment->AddBinding(pIAttachmentObject, nullptr, CA_CharEditModel);
-			}
-			else
-			{
-				pIAttachment->ClearBinding(CA_CharEditModel);
-			}
+			LoadBinding(pIAttachment, desc.m_strGeometryFilepath.c_str(), characterManager);
 		}
 
 		SimulationParams& ap = pIAttachment->GetSimulationParams();
@@ -2460,54 +3101,19 @@ void CharacterDefinition::ApplyFaceAttachment(IAttachment* pIAttachment, ICharac
 		ap.m_nClampType = desc.m_simulationParams.m_nClampType;
 		if (showDebug && (ap.m_nClampType == SimulationParams::PENDULUM_CONE || ap.m_nClampType == SimulationParams::PENDULUM_HINGE_PLANE || ap.m_nClampType == SimulationParams::PENDULUM_HALF_CONE))
 		{
-			ap.m_useDebugSetup = desc.m_simulationParams.m_useDebugSetup;
-			ap.m_useDebugText = desc.m_simulationParams.m_useDebugText;
-			ap.m_useSimulation = desc.m_simulationParams.m_useSimulation;
-			ap.m_useRedirect = 0;
-			ap.m_nSimFPS = desc.m_simulationParams.m_nSimFPS;
-
-			ap.m_fMaxAngle = desc.m_simulationParams.m_fMaxAngle;
-			ap.m_vDiskRotation.x = desc.m_simulationParams.m_vDiskRotation.x;
-
-			ap.m_fMass = desc.m_simulationParams.m_fMass;
-			ap.m_fGravity = desc.m_simulationParams.m_fGravity;
-			ap.m_fDamping = desc.m_simulationParams.m_fDamping;
-			ap.m_fStiffness = desc.m_simulationParams.m_fStiffness;
-
-			ap.m_vPivotOffset = desc.m_simulationParams.m_vPivotOffset;
-			ap.m_vSimulationAxis = desc.m_simulationParams.m_vSimulationAxis;
-			ap.m_vStiffnessTarget = desc.m_simulationParams.m_vStiffnessTarget;
+			HelperCopySimulationParametersBase(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersPhysics(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersPendulum(ap, desc.m_simulationParams);
 			ap.m_strProcFunction.reset();
-			ap.m_vCapsule = desc.m_simulationParams.m_vCapsule;
-
-			ap.m_nProjectionType = desc.m_simulationParams.m_nProjectionType;
-			ap.m_arrProxyNames = desc.m_simulationParams.m_arrProxyNames;
 		}
 		if (showDebug && ap.m_nClampType == SimulationParams::SPRING_ELLIPSOID)
 		{
-			ap.m_useDebugSetup = desc.m_simulationParams.m_useDebugSetup;
-			ap.m_useDebugText = desc.m_simulationParams.m_useDebugText;
-			ap.m_useSimulation = desc.m_simulationParams.m_useSimulation;
+			HelperCopySimulationParametersBase(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersPhysics(ap, desc.m_simulationParams);
+			HelperCopySimulationParametersSpring(ap, desc.m_simulationParams);
 			ap.m_useRedirect = 0;
-			ap.m_nSimFPS = desc.m_simulationParams.m_nSimFPS;
-
-			ap.m_fRadius = desc.m_simulationParams.m_fRadius;
-			ap.m_vSphereScale = desc.m_simulationParams.m_vSphereScale;
-			ap.m_vDiskRotation = desc.m_simulationParams.m_vDiskRotation;
-
-			ap.m_fMass = desc.m_simulationParams.m_fMass;
-			ap.m_fGravity = desc.m_simulationParams.m_fGravity;
-			ap.m_fDamping = desc.m_simulationParams.m_fDamping;
-			ap.m_fStiffness = desc.m_simulationParams.m_fStiffness;
-
-			ap.m_vStiffnessTarget = desc.m_simulationParams.m_vStiffnessTarget;
 			ap.m_strProcFunction.reset();
-
-			ap.m_nProjectionType = desc.m_simulationParams.m_nProjectionType;
-			ap.m_vCapsule = desc.m_simulationParams.m_vCapsule;
 			ap.m_vCapsule.x = 0;
-			ap.m_vPivotOffset = desc.m_simulationParams.m_vPivotOffset;
-			ap.m_arrProxyNames = desc.m_simulationParams.m_arrProxyNames;
 		}
 
 		pIAttachment->PostUpdateSimulationParams(bAttachmentSortingRequired);
@@ -2521,9 +3127,7 @@ void CharacterDefinition::ApplyFaceAttachment(IAttachment* pIAttachment, ICharac
 
 void CharacterDefinition::ApplySkinAttachment(IAttachment* pIAttachment, ICharacterManager* characterManager, const CharacterAttachment& desc, ICharacterInstance* pICharacterInstance, bool* skinChanged) const
 {
-	uint32 type = pIAttachment->GetType();
 	IAttachmentObject* iattachmentObject = pIAttachment->GetIAttachmentObject();
-	IAttachmentManager* attachmentManager = pICharacterInstance->GetIAttachmentManager();
 
 	string existingMaterialFilename;
 	string existingBindingFilename;
@@ -2535,9 +3139,9 @@ void CharacterDefinition::ApplySkinAttachment(IAttachment* pIAttachment, ICharac
 		if (iattachmentObject->GetAttachmentType() == IAttachmentObject::eAttachment_SkinMesh)
 		{
 			CSKINAttachment* attachmentObject = (CSKINAttachment*)iattachmentObject;
-			if (attachmentObject->m_pIAttachmentSkin)
+			if (attachmentObject->GetIAttachmentSkin())
 			{
-				if (ISkin* skin = attachmentObject->m_pIAttachmentSkin->GetISkin())
+				if (ISkin* skin = attachmentObject->GetIAttachmentSkin()->GetISkin())
 				{
 					existingBindingFilename = skin->GetModelFilePath();
 					if (IMaterial* material = attachmentObject->GetReplacementMaterial(0))
@@ -2575,7 +3179,6 @@ void CharacterDefinition::ApplySkinAttachment(IAttachment* pIAttachment, ICharac
 			return;
 
 		CSKINAttachment* attachmentObject = new CSKINAttachment();
-		attachmentObject->m_pIAttachmentSkin = attachmentSkin;
 
 		_smart_ptr<IMaterial> material;
 		if (!desc.m_strMaterial.empty())

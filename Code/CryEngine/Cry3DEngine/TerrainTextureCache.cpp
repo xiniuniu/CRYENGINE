@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   TerrainTextureCache.cpp
@@ -66,7 +66,7 @@ uint16 CTextureCache::GetTexture(byte* pData, uint16& nSlotId)
 	RectI region;
 	GetSlotRegion(region, nSlotId);
 
-	GetRenderer()->DownLoadToVideoMemory(pData, m_nDim, m_nDim, m_eTexFormat, m_eTexFormat, 0, false, FILTER_NONE, m_nPoolTexId,
+	GetRenderer()->UploadToVideoMemory(pData, m_nDim, m_nDim, m_eTexFormat, m_eTexFormat, 0, false, FILTER_NONE, m_nPoolTexId,
 		NULL, FT_USAGE_ALLOWREADSRGB, GetTerrain()->GetEndianOfTexture(), &region);
 
 	m_UsedTextures.Add(nSlotId);
@@ -85,7 +85,7 @@ void CTextureCache::UpdateTexture(byte* pData, const uint16& nSlotId)
 	RectI region;
 	GetSlotRegion(region, nSlotId);
 
-	GetRenderer()->DownLoadToVideoMemory(pData, m_nDim, m_nDim, m_eTexFormat, m_eTexFormat, 0, false, FILTER_NONE, m_nPoolTexId,
+	GetRenderer()->UploadToVideoMemory(pData, m_nDim, m_nDim, m_eTexFormat, m_eTexFormat, 0, false, FILTER_NONE, m_nPoolTexId,
 	                                     NULL, FT_USAGE_ALLOWREADSRGB, GetTerrain()->GetEndianOfTexture(), &region);
 }
 
@@ -121,7 +121,7 @@ int CTextureCache::GetPoolSize()
 
 void CTextureCache::InitPool(byte* pData, int nDim, ETEX_Format eTexFormat)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Texture, 0, "Terrain texture cache");
+	MEMSTAT_CONTEXT(EMemStatContextType::Texture, "Terrain texture cache");
 
 	ResetTexturePool();
 
@@ -134,8 +134,9 @@ void CTextureCache::InitPool(byte* pData, int nDim, ETEX_Format eTexFormat)
 	stack_string sPoolTextureName;
 	sPoolTextureName.Format("$TERRAIN_TEX_POOL_%p", this);
 
-	m_nPoolTexId = GetRenderer()->DownLoadToVideoMemory(NULL, nPoolTexDim, nPoolTexDim, eTexFormat, eTexFormat, 0, false, FILTER_NONE, 0,
-		                                                  sPoolTextureName, (eTexFormat == eTF_R32F) ? 0 : FT_USAGE_ALLOWREADSRGB, GetPlatformEndian(), NULL, false);
+	const bool asyncDevTexCreation = true;
+	m_nPoolTexId = GetRenderer()->UploadToVideoMemory(NULL, nPoolTexDim, nPoolTexDim, eTexFormat, eTexFormat, 0, false, FILTER_NONE, 0,
+		                                                  sPoolTextureName, (eTexFormat == eTF_R32F) ? 0 : FT_USAGE_ALLOWREADSRGB, GetPlatformEndian(), NULL, asyncDevTexCreation);
 
 	if (m_nPoolTexId <= 0)
 	{

@@ -3,7 +3,7 @@
 
 start_sources()
 # -- steam_lobby.waf_files --
-sources_platform(WIN32)
+sources_platform(WINDOWS)
 add_sources("CryLobby_steam_uber.cpp"
 	PROJECTS CryLobby
 	SOURCE_GROUP "Steam"
@@ -71,7 +71,6 @@ add_sources("CryLobby_uber_0.cpp"
 		"CryFriendsManagement.cpp"
 		"CryHostMigration.cpp"
 		"CryLobby.cpp"
-		"CryLobbyDLL.cpp"
 		"CryLobbyUI.cpp"
 		"CryMatchMaking.cpp"
 		"CryReward.cpp"
@@ -110,7 +109,7 @@ add_sources("NoUberFile"
 end_sources()
 #END-FILE-LIST
 
-CryEngineModule(CryLobby PCH "StdAfx.cpp" SOLUTION_FOLDER "CryPlugins")
+CryEngineModule(CryLobby FORCE_SHARED_WIN PCH "StdAfx.cpp" SOLUTION_FOLDER "CryPlugins")
 target_include_directories(${THIS_PROJECT}
 PUBLIC
 	"$<BUILD_INTERFACE:${CRYENGINE_DIR}/Code/CryPlugins/CryLobby/Interface>" "$<INSTALL_INTERFACE:include/CryLobby>"
@@ -120,20 +119,56 @@ PRIVATE
 	"${SDK_DIR}/speex-1.0.5/include"
 )
 
-if(WIN64)
+if(WINDOWS)
 	find_library(SPEEX libspeex-1.0.5 PATHS "${SDK_DIR}/speex-1.0.5/lib/x64" )
-elseif(WIN32)
-	find_library(SPEEX libspeex-1.0.5 PATHS "${SDK_DIR}/speex-1.0.5/lib/win32" )
 endif()
 mark_as_advanced(FORCE SPEEX)
 
-if (WIN32 OR WIN64)
+if (EXISTS "${SDK_DIR}/Steamworks" AND WINDOWS)
+	include(${TOOLS_CMAKE_DIR}/modules/Steamworks.cmake)
+	target_link_libraries(${THIS_PROJECT} PRIVATE Steamworks)
+endif()
+
+if (WINDOWS)
 	target_link_libraries(${THIS_PROJECT} PRIVATE Ws2_32 Mswsock "${SPEEX}")
 elseif(DURANGO)
 	target_link_libraries(${THIS_PROJECT} PRIVATE Ws2_32 uuid)
-	set_property( TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY VS_CONFIG_PROPERTY_GROUP_ReferencePath "${CMAKE_CURRENT_SOURCE_DIR}/DurangoLive/DurangoChat/Microsoft.Xbox.GameChat;${DURANGO_SDK}/ExtensionSDKs/xbox services api/8.0/references/commonconfiguration/neutral")		
+	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY VS_CONFIG_PROPERTY_GROUP_ReferencePath "${DURANGO_SDK}/ExtensionSDKs/Xbox.Game.Chat.2.Cpp.API/8.0;${DURANGO_SDK}/ExtensionSDKs/Xbox.Services.API.Cpp/8.0/DesignTime/CommonConfiguration/Neutral")		
 	target_compile_options(${THIS_PROJECT} PRIVATE /ZW /wd4530)
 elseif(ORBIS)
 	target_compile_options(${THIS_PROJECT} PRIVATE -Wno-deprecated-declarations)
 	target_link_libraries(${THIS_PROJECT} PRIVATE SceNpCommerce_stub_weak SceJson2_stub_weak)
+endif()
+
+if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	target_compile_options(${THIS_PROJECT} PRIVATE
+		-Wno-unused-function
+		-Wno-reorder
+		-Wno-multichar
+		-Wno-parentheses
+		-Wno-switch
+		-Wno-bitwise-op-parentheses
+		-Wno-logical-op-parentheses
+		-Wno-unknown-pragmas
+		-Wno-unused-value
+		-Wno-unused-private-field
+		-Wno-format
+		-Wno-empty-body
+	)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+	target_compile_options(${THIS_PROJECT} PRIVATE
+		-Wno-unused-function
+		-Wno-unused-value
+		-Wno-sign-compare
+		-Wno-unused-but-set-variable
+		-Wno-misleading-indentation
+		-Wno-unknown-pragmas
+		-Wno-strict-aliasing
+		-Wno-maybe-uninitialized
+		-Wno-multichar
+		-Wno-reorder
+		-Wno-parentheses
+		-Wno-format
+		-Wno-switch
+	)
 endif()

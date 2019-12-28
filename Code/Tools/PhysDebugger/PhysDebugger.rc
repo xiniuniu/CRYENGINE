@@ -28,7 +28,7 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_PHYSTESTBED         ICON                    "..\\..\\Sandbox\\Plugins\\EditorCommon\\Icons\\General\\Physics_Tool.ico"
+IDI_PHYSTESTBED         ICON                    "..\\..\\Sandbox\\Plugins\\EditorCommon\\Icons\\general_physics_tool.ico"
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -43,6 +43,10 @@ IDC_PHYS_GRAB           CURSOR                  "..\\..\\Sandbox\\EditorQt\\res\
 IDC_PHYS_AIM            CURSOR                  "..\\..\\Sandbox\\EditorQt\\res\\phys_hit.cur"
 
 IDC_SCISSORS            CURSOR                  "..\\..\\Sandbox\\EditorQt\\res\\scissors.cur"
+
+IDC_PHYS_PIN            CURSOR                  "..\\..\\Sandbox\\EditorQt\\res\\phys_pin.cur"
+
+IDC_PHYS_FORK           CURSOR                  "..\\..\\Sandbox\\EditorQt\\res\\phys_fork.cur"
 
 
 /////////////////////////////////////////////////////////////////////////////

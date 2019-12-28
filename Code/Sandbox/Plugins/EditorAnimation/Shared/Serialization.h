@@ -1,14 +1,10 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryMath/Cry_Math.h>
 
 #include <CrySerialization/Forward.h>
-
-struct SkeletonAlias;
-
-bool Serialize(Serialization::IArchive& ar, SkeletonAlias& value, const char* name, const char* label);
 
 #include <CrySerialization/STL.h>
 #include <CrySerialization/Decorators/Range.h>

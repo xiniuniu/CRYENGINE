@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -20,13 +20,14 @@ public:
 	virtual ~CEntityComponentAudio() override;
 
 	// IEntityComponent
-	virtual void         ProcessEvent(SEntityEvent& event) override;
-	virtual void         Initialize() override;
-	virtual uint64       GetEventMask() const override;
-	virtual EEntityProxy GetProxyType() const override                    { return ENTITY_PROXY_AUDIO; }
-	virtual void         GameSerialize(TSerialize ser) override;
-	virtual bool         NeedGameSerialize() override                     { return false; }
-	virtual void         GetMemoryUsage(ICrySizer* pSizer) const override { pSizer->AddObject(this, sizeof(*this)); }
+	virtual void                    ProcessEvent(const SEntityEvent& event) override;
+	virtual void                    Initialize() override;
+	virtual Cry::Entity::EventFlags GetEventMask() const override;
+	virtual EEntityProxy            GetProxyType() const override                    { return ENTITY_PROXY_AUDIO; }
+	virtual void                    GameSerialize(TSerialize ser) override;
+	virtual bool                    NeedGameSerialize() override                     { return false; }
+	virtual void                    GetMemoryUsage(ICrySizer* pSizer) const override { pSizer->AddObject(this, sizeof(*this)); }
+	virtual void                    OnTransformChanged() override;
 	// ~IEntityComponent
 
 	// IEntityAudioComponent
@@ -41,19 +42,22 @@ public:
 	virtual bool                    RemoveAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId) override;
 	virtual void                    SetAudioAuxObjectOffset(Matrix34 const& offset, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
 	virtual Matrix34 const&         GetAudioAuxObjectOffset(CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
-	virtual bool                    PlayFile(CryAudio::SPlayFileInfo const& playbackInfo, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) override;
-	virtual void                    StopFile(char const* const szFile, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
-	virtual bool                    ExecuteTrigger(CryAudio::ControlId const audioTriggerId, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) override;
+	virtual bool                    ExecuteTrigger(CryAudio::ControlId const audioTriggerId, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, EntityId const entityId = INVALID_ENTITYID, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) override;
+	virtual bool                    ExecuteTriggerWithCallbacks(CryAudio::STriggerCallbackData const& callbackData, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, EntityId const entityId = INVALID_ENTITYID, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) override;
 	virtual void                    StopTrigger(CryAudio::ControlId const audioTriggerId, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) override;
 	virtual void                    SetSwitchState(CryAudio::ControlId const audioSwitchId, CryAudio::SwitchStateId const audioStateId, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
 	virtual void                    SetParameter(CryAudio::ControlId const parameterId, float const value, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
 	virtual void                    SetObstructionCalcType(CryAudio::EOcclusionType const occlusionType, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
+	virtual void                    SetOcclusionRayOffset(float const occlusionRayOffset, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
 	virtual void                    SetEnvironmentAmount(CryAudio::EnvironmentId const audioEnvironmentId, float const amount, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
 	virtual void                    SetCurrentEnvironments(CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) override;
 	virtual void                    AudioAuxObjectsMoveWithEntity(bool const bCanMoveWithEntity) override;
-	virtual void                    AddAsListenerToAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (* func)(CryAudio::SRequestInfo const* const), CryAudio::ESystemEvents const eventMask) override;
-	virtual void                    RemoveAsListenerFromAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (* func)(CryAudio::SRequestInfo const* const)) override;
-	virtual CryAudio::AuxObjectId   GetAuxObjectIdFromAudioObject(CryAudio::IObject* pObject) override;
+	virtual void                    AddAsListenerToAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const), CryAudio::ESystemEvents const eventMask) override;
+	virtual void                    RemoveAsListenerFromAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const)) override;
+	virtual void                    ToggleAbsoluteVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) override;
+	virtual void                    ToggleRelativeVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) override;
+	virtual void                    AddListener(CryAudio::ListenerId const listenerId) override;
+	virtual void                    RemoveListener(CryAudio::ListenerId const listenerId) override;
 	// ~IEntityAudioComponent
 
 private:
@@ -61,12 +65,11 @@ private:
 	enum EEntityAudioProxyFlags : CryAudio::EnumFlagsType
 	{
 		eEntityAudioProxyFlags_None = 0,
-		eEntityAudioProxyFlags_CanMoveWithEntity = BIT(0),
-	};
+		eEntityAudioProxyFlags_CanMoveWithEntity = BIT(0), };
 
 	struct SAuxObjectWrapper
 	{
-		SAuxObjectWrapper(CryAudio::IObject* const _pIObject)
+		explicit SAuxObjectWrapper(CryAudio::IObject* const _pIObject)
 			: pIObject(_pIObject)
 			, offset(IDENTITY)
 		{}
@@ -90,13 +93,13 @@ private:
 
 	static AuxObjectPair s_nullAuxObjectPair;
 
-	void           OnListenerEnter(IEntity const* const pEntity);
+	void           OnListenerEnter(CEntity const* const pEntity);
 	void           OnListenerMoveNear(Vec3 const& closestPointToArea);
 	void           OnListenerMoveInside(Vec3 const& listenerPos);
-	void           OnListenerExclusiveMoveInside(IEntity const* const __restrict pEntity, IEntity const* const __restrict pAreaHigh, IEntity const* const __restrict pAreaLow, float const fade);
+	void           OnListenerExclusiveMoveInside(CEntity const* const __restrict pEntity, CEntity const* const __restrict pAreaHigh, CEntity const* const __restrict pAreaLow, float const fade);
 	void           OnMove();
 	AuxObjectPair& GetAudioAuxObjectPair(CryAudio::AuxObjectId const audioAuxObjectId);
-	void           SetEnvironmentAmountInternal(IEntity const* const pIEntity, float const amount) const;
+	void           SetEnvironmentAmountInternal(CEntity const* const pIEntity, float const amount) const;
 
 	// Function objects
 	struct SReleaseAudioProxy
@@ -123,40 +126,6 @@ private:
 
 		Matrix34 const&                   transformation;
 		CryAudio::SRequestUserData const& userData;
-	};
-
-	struct SPlayFile
-	{
-		SPlayFile(CryAudio::SPlayFileInfo const& _playbackInfo, CryAudio::SRequestUserData const& _userData)
-			: playbackInfo(_playbackInfo)
-			, userData(_userData)
-		{}
-
-		inline void operator()(AuxObjectPair const& pair)
-		{
-			pair.second.pIObject->PlayFile(playbackInfo, userData);
-		}
-
-	private:
-
-		CryAudio::SPlayFileInfo const&    playbackInfo;
-		CryAudio::SRequestUserData const& userData;
-	};
-
-	struct SStopFile
-	{
-		SStopFile(char const* const _szFile)
-			: szFile(_szFile)
-		{}
-
-		inline void operator()(AuxObjectPair const& pair)
-		{
-			pair.second.pIObject->StopFile(szFile);
-		}
-
-	private:
-
-		char const* const szFile;
 	};
 
 	struct SStopTrigger
@@ -215,7 +184,7 @@ private:
 
 	struct SSetOcclusionType
 	{
-		SSetOcclusionType(CryAudio::EOcclusionType const _occlusionType)
+		explicit SSetOcclusionType(CryAudio::EOcclusionType const _occlusionType)
 			: occlusionType(_occlusionType)
 		{}
 
@@ -227,6 +196,22 @@ private:
 	private:
 
 		CryAudio::EOcclusionType const occlusionType;
+	};
+
+	struct SSetOcclusionRayOffset
+	{
+		explicit SSetOcclusionRayOffset(float const _occlusionRayOffset)
+			: occlusionRayOffset(_occlusionRayOffset)
+		{}
+
+		inline void operator()(AuxObjectPair const& pair)
+		{
+			pair.second.pIObject->SetOcclusionRayOffset(occlusionRayOffset);
+		}
+
+	private:
+
+		float const occlusionRayOffset;
 	};
 
 	struct SSetEnvironmentAmount
@@ -249,7 +234,7 @@ private:
 
 	struct SSetCurrentEnvironments
 	{
-		SSetCurrentEnvironments(EntityId const entityId)
+		explicit SSetCurrentEnvironments(EntityId const entityId)
 			: m_entityId(entityId)
 		{}
 
@@ -280,6 +265,38 @@ private:
 
 		Matrix34 const& offset;
 		Matrix34 const& entityPosition;
+	};
+
+	struct SToggleAbsoluteVelocityTracking
+	{
+		SToggleAbsoluteVelocityTracking(bool const enable_)
+			: enable(enable_)
+		{}
+
+		inline void operator()(AuxObjectPair const& pair)
+		{
+			pair.second.pIObject->ToggleAbsoluteVelocityTracking(enable);
+		}
+
+	private:
+
+		bool const enable;
+	};
+
+	struct SToggleRelativeVelocityTracking
+	{
+		SToggleRelativeVelocityTracking(bool const enable_)
+			: enable(enable_)
+		{}
+
+		inline void operator()(AuxObjectPair const& pair)
+		{
+			pair.second.pIObject->ToggleRelativeVelocityTracking(enable);
+		}
+
+	private:
+
+		bool const enable;
 	};
 	// ~Function objects
 

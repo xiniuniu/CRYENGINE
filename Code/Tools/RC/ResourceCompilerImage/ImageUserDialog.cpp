@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ImageUserDialog.h"        // CImageUserDialog
@@ -684,7 +684,7 @@ void CImageUserDialog::CreateDialogItems()
 void CImageUserDialog::SelectPreset(const string &presetName)
 {
 	string filename = m_pImageCompiler->m_CC.config->GetAsString("overwritefilename", m_pImageCompiler->m_CC.sourceFileNameOnly, m_pImageCompiler->m_CC.sourceFileNameOnly);
-	filename = PathHelpers::RemoveExtension(filename);
+	filename = PathUtil::RemoveExtension(filename.c_str());
 
 	const HWND hwnd = GetDlgItem(m_hWindow, IDC_TEMPLATECOMBO);
 	SendMessage(hwnd, CB_RESETCONTENT, 0, 0);
@@ -2020,12 +2020,13 @@ DWORD CImageUserDialog::ThreadStart()
 
 void CImageUserDialog::TriggerUpdatePreview(bool bFull)
 {
-	LOCK_MONITOR();
-
 	HWND hwnd = GetDlgItem(m_hWindow, IDC_PREVIEWON); 
 	assert(hwnd);
 
-	m_pImageCompiler->m_Props.m_bPreview = (Button_GetCheck(hwnd) != 0);
+	const bool updatePreview = (Button_GetCheck(hwnd) != 0);
+
+	LOCK_MONITOR();
+	m_pImageCompiler->m_Props.m_bPreview = updatePreview;
 	if (m_pImageCompiler->m_Props.m_bPreview)
 	{
 		m_eWorkerAction = (bFull ? WorkerActionUpdatePreview : WorkerActionUpdatePreviewOnly);

@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ParticleSubEmitter.h"
@@ -6,10 +6,6 @@
 #include <CryAudio/IObject.h>
 
 static const float fMIN_PULSE_PERIOD = 0.1f;
-
-//////////////////////////////////////////////////////////////////////////
-// CParticleSubEmitter implementation.
-//////////////////////////////////////////////////////////////////////////
 
 CParticleSubEmitter::CParticleSubEmitter(CParticleSource* pSource, CParticleContainer* pCont)
 	: m_ChaosKey(0U)
@@ -297,7 +293,7 @@ void CParticleSubEmitter::EmitParticles(SParticleUpdateContext& context)
 
 							if (!EmitParticle(context, data, fPast))
 							{
-								GetContainer().GetCounts().ParticlesReject += (fPast - fMinPast) / fAgeIncrement;
+								GetContainer().GetCounts().particles.reject += (fPast - fMinPast) / fAgeIncrement;
 								break;
 							}
 						}
@@ -310,7 +306,7 @@ void CParticleSubEmitter::EmitParticles(SParticleUpdateContext& context)
 						{
 							if (!EmitParticle(context, data, fAge - m_fStartAge))
 							{
-								GetContainer().GetCounts().ParticlesReject += nEmit;
+								GetContainer().GetCounts().particles.reject += nEmit;
 								break;
 							}
 						}
@@ -369,7 +365,7 @@ bool CParticleSubEmitter::GetMoveRelative(Vec3& vPreTrans, QuatTS& qtsMove) cons
 
 void CParticleSubEmitter::UpdateForce()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 	// Set or clear physical force.
 
@@ -581,7 +577,7 @@ void CParticleSubEmitter::UpdateForce()
 
 void CParticleSubEmitter::UpdateAudio()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 	SpawnParams const& spawnParams = GetMain().GetSpawnParams();
 
 	if (spawnParams.bEnableAudio && GetCVars()->e_ParticlesAudio > 0)
@@ -629,7 +625,7 @@ void CParticleSubEmitter::UpdateAudio()
 
 				if (m_startAudioTriggerId != CryAudio::InvalidControlId || m_stopAudioTriggerId != CryAudio::InvalidControlId)
 				{
-					CryAudio::SCreateObjectData const objectData("ParticleSubEmitter", spawnParams.occlusionType, GetEmitTM(), INVALID_ENTITYID, true);
+					CryAudio::SCreateObjectData const objectData("ParticleSubEmitter", spawnParams.occlusionType, GetEmitTM(), true);
 					m_pIAudioObject = gEnv->pAudioSystem->CreateObject(objectData);
 					m_currentAudioOcclusionType = spawnParams.occlusionType;
 

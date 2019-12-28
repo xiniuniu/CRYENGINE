@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,27 +9,33 @@
 class CVolumetricCloudsStage : public CGraphicsPipelineStage
 {
 public:
+	static const EGraphicsPipelineStage StageID = eStage_VolumetricClouds;
+
 	static bool IsRenderable();
-	static Vec4 GetVolumetricCloudShadowParams(const CRenderCamera&, const Vec2& windOffset, const Vec2& vTiling);
+	static Vec4 GetVolumetricCloudShadowParams(const CCamera&, const Vec2& windOffset, const Vec2& vTiling);
 
 public:
-	CVolumetricCloudsStage();
+	CVolumetricCloudsStage(CGraphicsPipeline& graphicsPipeline);
 	virtual ~CVolumetricCloudsStage();
 
-	void Init() override;
-	void Prepare(CRenderView* pRenderView) override;
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return gcpRendD3D->m_bVolumetricCloudsEnabled;
+	}
+
+	void Init() final;
+	void Update() final;
 
 	void ExecuteShadowGen();
-
 	void Execute();
 
 private:
 	void  ExecuteVolumetricCloudShadowGen();
-	void  UpdateCloudShadowGenShaderParam(const Vec3& texSize);
+	void  GenerateCloudShadowGenShaderParam(const Vec3& texSize);
 
 	void  ExecuteComputeDensityAndShadow(const struct VCCloudRenderContext& context);
 	void  ExecuteRenderClouds(const struct VCCloudRenderContext& context);
-	void  UpdateCloudShaderParam(struct VCCloudRenderContext& context);
+	void  GenerateCloudShaderParam(struct VCCloudRenderContext& context);
 
 	int32 GetBufferIndex(const int32 gpuCount, bool bStereoMultiGPURendering) const;
 	int32 GetCurrentFrameIndex() const;
@@ -37,8 +43,8 @@ private:
 
 	bool  AreTexturesValid() const;
 
-	void  BuildCloudBlockerList();
-	void  BuildCloudBlockerSSList();
+	void  GenerateCloudBlockerList();
+	void  GenerateCloudBlockerSSList();
 
 private:
 	static const int32   MaxFrameNum = 4;
@@ -74,7 +80,7 @@ private:
 
 	Matrix44             m_viewMatrix[MaxEyeNum][MaxFrameNum];
 	Matrix44             m_projMatrix[MaxEyeNum][MaxFrameNum];
-	int32                m_nUpdateFrameID[MaxEyeNum];
+	int64                m_nUpdateFrameID[MaxEyeNum];
 	int32                m_cleared;
 	int32                m_tick;
 
@@ -82,4 +88,7 @@ private:
 	TArray<Vec4>         m_blockerParamArray;
 	TArray<Vec4>         m_blockerSSPosArray;
 	TArray<Vec4>         m_blockerSSParamArray;
+
+public:
+	_smart_ptr<CTexture> m_pTexVolCloudShadow;
 };

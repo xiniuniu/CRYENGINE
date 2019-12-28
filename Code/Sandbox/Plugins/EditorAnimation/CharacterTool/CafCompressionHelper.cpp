@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -6,9 +6,10 @@
 #include "CafCompressionHelper.h"
 #include "Shared/AnimSettings.h"
 
-#include <CrySystem/ISystem.h>
-#include <CrySystem/File/ICryPak.h>
 #include <CryCore/ToolsHelpers/ResourceCompilerHelper.h>
+#include <CrySystem/File/ICryPak.h>
+#include <CrySystem/ISystem.h>
+#include <PathUtils.h>
 #include <QtCore/QDir>
 
 static const char* ANIMATION_COMPRESSION_TEMP_ROOT = "Editor/Tmp/AnimationCompression/";
@@ -47,7 +48,7 @@ bool CafCompressionHelper::CompressAnimation(const string& animationPath, string
 		return false;
 	}
 
-	const string gameFolderPath = PathUtil::AddSlash(PathUtil::GetGameFolder());
+	const string gameFolderPath = PathUtil::AddSlash(PathUtil::GetGameProjectAssetsPath());
 	string additionalSettings;
 	additionalSettings += " /animConfigFolder=Animations";
 	additionalSettings += " /SkipDba=1";
@@ -102,12 +103,6 @@ bool CafCompressionHelper::CompressAnimationForPreview(string* outputCafPath, st
 
 	const string inputFilePath = PathUtil::ReplaceExtension(animationPath, "i_caf"); //AnimSettingsFileHelper::GetIntermediateFilename(animationPath);
 
-	if (animSettings.build.skeletonAlias.empty())
-	{
-		outErrorMessage->Format("Skeleton alias is not specified.");
-		return false;
-	}
-
 	if (gEnv->pCryPak->IsFileExist(inputFilePath, ICryPak::eFileLocation_OnDisk) == false)
 	{
 		outErrorMessage->Format("Uncompressed animation '%s' doesn't exist on disk.", inputFilePath.c_str());
@@ -134,7 +129,7 @@ bool CafCompressionHelper::CompressAnimationForPreview(string* outputCafPath, st
 	outputFilename += animationPath;
 	*outputCafPath = outputFilename;
 
-	const string gameFolderPath = PathUtil::AddSlash(PathUtil::GetGameFolder());
+	const string gameFolderPath = PathUtil::AddSlash(PathUtil::GetGameProjectAssetsPath());
 	string additionalSettings;
 	additionalSettings += " /animConfigFolder=Animations";
 	additionalSettings += " /SkipDba=1";

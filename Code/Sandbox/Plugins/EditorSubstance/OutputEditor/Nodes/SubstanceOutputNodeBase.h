@@ -1,3 +1,5 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 #include <NodeGraph/AbstractNodeItem.h>
 #include "SubstanceCommon.h"
@@ -45,13 +47,15 @@ namespace EditorSubstance
 			virtual void SetName(const QString& name) override;
 
 		protected:
-
-		protected:
 			CSubstanceNodeContentWidget::EOutputType m_outputType;
 			SSubstanceOutput m_pOutput;
 			std::shared_ptr<QImage> m_originalImage;
 			CSubstanceNodeContentWidget* m_pNodeContentWidget;
 			CryGraphEditor::PinItemArray m_pins;
+
+		private:
+			CryGraphEditor::CNodeEditorData* m_pData;
+			
 		};
 
 	}

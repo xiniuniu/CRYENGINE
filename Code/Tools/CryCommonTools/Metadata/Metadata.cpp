@@ -1,8 +1,9 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Metadata.h"
 #include "IConverter.h"
+#include <CrySystem/XML/IXml.h>
 
 
 namespace AssetManager
@@ -119,6 +120,15 @@ const XmlNodeRef GetMetadataNode(const XmlNodeRef& asset)
 	return asset->isTag(GetMetadataTag()) ? asset : asset->findChild(GetMetadataTag());
 }
 
+void RemoveDetails(XmlNodeRef& xml)
+{
+	XmlNodeRef pDetails = xml->findChild("Details");
+	if (pDetails)
+	{
+		pDetails->removeAllChilds();
+	}
+}
+
 void AddDetails(XmlNodeRef& xml, const std::vector<std::pair<string, string>>& details)
 {
 	if (details.empty())
@@ -127,11 +137,7 @@ void AddDetails(XmlNodeRef& xml, const std::vector<std::pair<string, string>>& d
 	}
 
 	XmlNodeRef pDetails = xml->findChild("Details");
-	if (pDetails)
-	{
-		pDetails->removeAllChilds();
-	}
-	else
+	if (!pDetails)
 	{
 		pDetails = xml->newChild("Details");
 	}
@@ -144,7 +150,7 @@ void AddDetails(XmlNodeRef& xml, const std::vector<std::pair<string, string>>& d
 	}
 }
 
-void AddDependencies(XmlNodeRef & xml, const std::vector<string>& dependencies)
+void AddDependencies(XmlNodeRef & xml, const std::vector<std::pair<string,int32>>& dependencies)
 {
 	if (dependencies.empty())
 	{
@@ -161,18 +167,23 @@ void AddDependencies(XmlNodeRef & xml, const std::vector<string>& dependencies)
 		pDependencies = xml->newChild("Dependencies");
 	}
 
-	for (const auto& detail : dependencies)
+	for (const auto& item : dependencies)
 	{
 		XmlNodeRef pPath = pDependencies->newChild("Path");
 
-		// There is an agreement in the sandbox dependency tracking system that local paths have to start with "./"
-		if (detail.FindOneOf("/\\") != string::npos)
+		if (item.second)
 		{
-			pPath->setContent(detail);
+			pPath->setAttr("usageCount", item.second);
+		}
+
+		// There is an agreement in the sandbox dependency tracking system that local paths have to start with "./"
+		if (item.first.FindOneOf("/\\") != string::npos)
+		{
+			pPath->setContent(item.first);
 		}
 		else // Folow the engine rules: if no slashes in the name assume it is in same folder as the cryasset.
 		{
-			pPath->setContent(string().Format("./%s", detail.c_str()));
+			pPath->setContent(string().Format("./%s", item.first.c_str()));
 		}
 	}
 }

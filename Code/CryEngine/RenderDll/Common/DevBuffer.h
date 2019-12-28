@@ -1,7 +1,6 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef _DevBuffer_H_
-#define _DevBuffer_H_
+#pragma once
 
 #if !defined(D3DBuffer)
 	#define D3DBuffer void
@@ -14,9 +13,8 @@
 #endif
 
 #include <CryCore/Platform/CryWindows.h>
+#include <CryMemory/IDefragAllocator.h>
 #include "../XRenderD3D9/DeviceManager/DeviceResources.h"
-
-class CSubmissionQueue_DX11; // friend
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Usage hints
@@ -45,11 +43,10 @@ typedef uintptr_t buffer_handle_t;
 typedef uint32    item_handle_t;
 
 ////////////////////////////////////////////////////////////////////////////////////////
-struct SDescriptorBlock : SUsageTrackedItem<DEVRES_TRACK_LATENCY>
+struct SDescriptorBlock
 {
 	SDescriptorBlock(uint32 id)
-		: SUsageTrackedItem(0)
-		, blockID(id)
+		: blockID(id)
 		, pBuffer(NULL)
 		, size(0)
 		, offset(~0u)
@@ -63,7 +60,7 @@ struct SDescriptorBlock : SUsageTrackedItem<DEVRES_TRACK_LATENCY>
 };
 
 #if (CRY_RENDERER_VULKAN >= 10)
-struct SDescriptorSet : SUsageTrackedItem<DEVRES_TRACK_LATENCY>
+struct SDescriptorSet
 {
 	SDescriptorSet()
 		: vkDescriptorSet(VK_NULL_HANDLE)
@@ -114,6 +111,15 @@ public:
 		if (CryInterlockedDecrement(&m_nRefCount) == 0)
 			ReturnToPool();
 	}
+	
+	inline void SetDebugName(const char* name) const
+	{
+		if (!m_buffer) return;
+		// If we have CB direct access we only get a range-fragment instead of our own object which we can name
+#if !CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS
+		return m_buffer->SetDebugName(name);
+#endif
+	}
 
 	inline D3DBuffer* GetD3D() const
 	{
@@ -129,7 +135,7 @@ public:
 
 	inline uint64 GetCode() const
 	{
-#if CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS || CRY_RENDERER_OPENGL
+#if CONSTANT_BUFFER_ENABLE_DIRECT_ACCESS
 		uint64 code = reinterpret_cast<uintptr_t>(m_buffer) ^ SwapEndianValue((uint64)m_offset, true);
 		return code;
 #else
@@ -139,7 +145,7 @@ public:
 
 	void* BeginWrite();
 	void  EndWrite(bool requires_flush = false);
-	void  UpdateBuffer(const void* src, buffer_size_t size, buffer_size_t offset = 0, int numDataBlocks = 1); // See CDeviceManager::UploadContents for details on numDataBlocks
+	bool  UpdateBuffer(const void* src, buffer_size_t size, buffer_size_t offset = 0, int numDataBlocks = 1); // See CDeviceManager::UploadContents for details on numDataBlocks
 
 	bool  IsNullBuffer() const { return m_size == 0; }
 
@@ -152,7 +158,7 @@ typedef _smart_ptr<CConstantBuffer> CConstantBufferPtr;
 class CGraphicsDeviceConstantBuffer : public IGraphicsDeviceConstantBuffer
 {
 public:
-	CGraphicsDeviceConstantBuffer() : m_size(0), m_bDirty(false) {};
+	CGraphicsDeviceConstantBuffer() : m_size(0), m_bDirty(false) {}
 	virtual void       SetData(const uint8* data, size_t size) override;
 	// Should only be called from the thread that can create and update constant buffers
 	CConstantBufferPtr GetConstantBuffer();
@@ -160,7 +166,7 @@ public:
 	buffer_size_t      GetSize() const { return m_size; }
 
 protected:
-	virtual void DeleteThis() override { delete this; }
+	virtual void DeleteThis() const override { delete this; }
 
 private:
 	buffer_size_t                                      m_size;
@@ -171,44 +177,13 @@ private:
 	static CryCriticalSection                          s_accessLock;
 };
 
-////////////////////////////////////////////////////////////////////////////////////////
-// Pool statistics
-struct SDeviceBufferPoolStats : private NoCopy
-{
-	string                buffer_descr;
-	size_t                bank_size;       // size of a pool bank in bytes
-	size_t                num_banks;       // number of banks currently allocated
-	size_t                num_allocs;      // number of allocs present in the device pool
-	IDefragAllocatorStats allocator_stats; // backing allocator statistics
-
-	SDeviceBufferPoolStats()
-		: buffer_descr()
-		, bank_size()
-		, num_banks()
-		, num_allocs()
-		, allocator_stats()
-	{ memset(&allocator_stats, 0x0, sizeof(allocator_stats)); }
-
-	~SDeviceBufferPoolStats() {}
-};
-
 class CDeviceBufferManager
 {
 	////////////////////////////////////////////////////////////////////////////////////////
 	// Debug consistency functions
 	// Should only be called from the below befriended function! Please do not abuse!
-#if defined(CD3D9RENDERER_DEBUG_CONSISTENCY_CHECK)
-	// Wanted to only expose the actual function using these, however impossible to forward declare a method
-	// without including the full renderer here
-	friend class CD3D9Renderer;
-	void* BeginReadDirectIB(D3DIndexBuffer*, buffer_size_t size, buffer_size_t offset);
-	void* BeginReadDirectVB(D3DVertexBuffer*, buffer_size_t size, buffer_size_t offset);
-	void  EndReadDirectIB(D3DIndexBuffer*);
-	void  EndReadDirectVB(D3DVertexBuffer*);
-#endif
 
 	friend class CGuardedDeviceBufferManager;
-	friend class CSubmissionQueue_DX11;
 
 	void            PinItem_Locked(buffer_handle_t);
 	void            UnpinItem_Locked(buffer_handle_t);
@@ -219,6 +194,8 @@ class CDeviceBufferManager
 	void            EndReadWrite_Locked(buffer_handle_t handle);
 	bool            UpdateBuffer_Locked(buffer_handle_t handle, const void*, buffer_size_t, buffer_size_t = 0);
 	buffer_size_t   Size_Locked(buffer_handle_t);
+	
+	CConstantBuffer* CreateConstantBufferRaw(buffer_size_t size, bool dynamic = true, bool needslock = false);
 
 public:
 	CDeviceBufferManager();
@@ -255,7 +232,7 @@ public:
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////
-	// Initialization and destruction and high level update funcationality
+	// Initialization and destruction and high level update functionality
 	bool Init();
 	void Update(uint32 frameId, bool called_during_loading);
 	void ReleaseEmptyBanks(uint32 frameId);
@@ -264,7 +241,6 @@ public:
 
 	////////////////////////////////////////////////////////////////////////////////////////
 	// ConstantBuffer creation
-	CConstantBuffer*          CreateConstantBufferRaw(buffer_size_t size, bool dynamic = true, bool needslock = false);
 	inline CConstantBufferPtr CreateConstantBuffer(buffer_size_t size, bool dynamic = true, bool needslock = false)
 	{
 		CConstantBufferPtr result;
@@ -505,25 +481,15 @@ public:
 
 class CGpuBuffer : NoCopy, public CResourceBindingInvalidator
 {
-private:
-	struct STrackedDeviceBuffer : public SUsageTrackedItem<DEVRES_TRACK_LATENCY>
-	{
-		STrackedDeviceBuffer(CDeviceBuffer* pBuffer) 
-			: pDeviceBuffer(pBuffer)
-		{}
-
-		CDeviceBuffer* pDeviceBuffer;
-	};
 
 public:
-	CGpuBuffer(int maxBufferCopies = -1, CDeviceBuffer* devBufToOwn = nullptr)
+	CGpuBuffer(CDeviceBuffer* devBufToOwn = nullptr)
 		: m_pDeviceBuffer(nullptr)
 		, m_elementCount(0)
 		, m_elementSize(0)
 		, m_eFlags(0)
 		, m_eMapMode(D3D11_MAP(0))
 		, m_bLocked(false)
-		, m_MaxBufferCopies(maxBufferCopies)
 	{
 		if (devBufToOwn)
 		{
@@ -536,6 +502,20 @@ public:
 	void           Create(buffer_size_t numElements, buffer_size_t elementSize, DXGI_FORMAT elementFormat, uint32 flags, const void* pData);
 	void           Release();
 
+	inline SBufferLayout GetLayout() const
+	{
+		const SBufferLayout Layout =
+		{
+			m_eFormat,
+			m_elementCount,
+			static_cast<uint16>(m_elementSize),
+			/* TODO: change FT_... to CDeviceObjectFactory::... */
+			m_eFlags,
+		};
+
+		return Layout;
+	}
+
 	void           OwnDevBuffer(CDeviceBuffer* pDeviceTex);
 	void           UpdateBufferContent(const void* pData, buffer_size_t nSize);
 	void*          Lock();
@@ -547,6 +527,15 @@ public:
 	uint32         GetFlags()        const { return m_eFlags; }
 	buffer_size_t  GetElementCount() const { return m_elementCount; }
 
+#if DURANGO_USE_ESRAM
+	bool IsESRAMResident();
+	bool AcquireESRAMResidency(CDeviceResource::EResidencyCoherence residencyEntry);
+	bool ForfeitESRAMResidency(CDeviceResource::EResidencyCoherence residencyExit);
+	bool TransferESRAMAllocation(CGpuBuffer* target);
+#endif
+
+	inline void    SetDebugName(const char* name) const { m_pDeviceBuffer->SetDebugName(name); }
+
 	//////////////////////////////////////////////////////////////////////////
 
 private:
@@ -555,7 +544,6 @@ private:
 
 	void               PrepareUnusedBuffer();
 
-	std::queue<STrackedDeviceBuffer> m_deviceBufferPool;
 	CDeviceBuffer*                   m_pDeviceBuffer;
 
 	buffer_size_t                    m_elementCount;
@@ -566,7 +554,11 @@ private:
 	DXGI_FORMAT                      m_eFormat;
 	
 	bool                             m_bLocked;
-	int                              m_MaxBufferCopies;
+
+#if DURANGO_USE_ESRAM
+	uint32                           m_nESRAMSize = 0;
+	uint32                           m_nESRAMAlignment;
+#endif
 
 };
 
@@ -699,5 +691,3 @@ static inline bool FetchBufferData(void* dst, const void* src, size_t sze)
 
 	return requires_flush;
 }
-
-#endif // _D3DBuffer_H

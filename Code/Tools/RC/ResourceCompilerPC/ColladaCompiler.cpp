@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 //
 //  Crytek Engine Source File.
 //  Copyright (C), Crytek Studios, 2006.
@@ -34,7 +34,7 @@
 
 #include <CrySystem/XML/IXml.h>
 #include "../../CryXML/IXMLSerializer.h"
-#include "../../CryXML/Xml/xml.h"
+#include "../../CryXML/XML/xml.h"
 
 #include <iterator>
 
@@ -81,15 +81,15 @@ void ColladaCompiler::SetExportInfo(CContentCGF* const pCompiledCGF, ExportFile 
 	// Set export data.
 	{
 		const SFileVersion &version = m_CC.pRC->GetFileVersion();
-		info->rc_version[0] = version.v[0];
-		info->rc_version[1] = version.v[1];
-		info->rc_version[2] = version.v[2];
-		info->rc_version[3] = version.v[3];
+		info->rc_version[0] = version[0];
+		info->rc_version[1] = version[1];
+		info->rc_version[2] = version[2];
+		info->rc_version[3] = version[3];
 
 		StringHelpers::SafeCopyPadZeros(
 			info->rc_version_string,
 			sizeof(info->rc_version_string),
-			StringHelpers::Format(" RCVer:%d.%d ", version.v[2], version.v[1]).c_str());
+			StringHelpers::Format(" RCVer:%d.%d ", version[2], version[1]).c_str());
 	}
 
 	info->bFromColladaXSI = info->bFromColladaMAX = info->bFromColladaMAYA = false;
@@ -446,7 +446,7 @@ bool ColladaCompiler::Process()
 		for (int i=0;i<materialLibraryList.size();i++)
 		{
 			sMaterialLibrary& materialLibrary = materialLibraryList[i];
-			string const matFileName = PathHelpers::Join(outputFolder, materialLibrary.library.c_str()) + ".mtl";
+			string const matFileName = PathUtil::Make(outputFolder, materialLibrary.library.c_str()) + ".mtl";
 			WriteMaterialLibrary(materialLibrary, matFileName);
 		}
 	}
@@ -476,17 +476,17 @@ bool ColladaCompiler::Process()
 			exportFolder = exportfile.customExportPath;
 			if (PathHelpers::IsRelative(exportfile.customExportPath))
 			{
-				exportFolder = PathHelpers::Join(outputFolder,exportFolder);
+				exportFolder = PathUtil::Make(outputFolder,exportFolder);
 			}
 		}
-		const string exportFileName = PathHelpers::Join(exportFolder,exportfile.name);
+		const string exportFileName = PathUtil::Make(exportFolder,exportfile.name);
 
 		switch (exportfile.type)
 		{
 			// Export to CGF
 			case EXPORT_CGF:
 				{
-					const string exportFileNameExt = PathHelpers::ReplaceExtension(exportFileName,"cgf");
+					const string exportFileNameExt = PathUtil::ReplaceExtension(exportFileName,"cgf");
 					if (!CompileToCGF(exportfile, exportFileNameExt)
 						|| !m_CC.pRC->GetAssetManager()->SaveCryasset(m_CC.config, m_CC.GetSourcePath(), { exportFileNameExt }))
 					{
@@ -499,7 +499,7 @@ bool ColladaCompiler::Process()
 			// Export to CGA
 			case EXPORT_CGA:
 				{
-					const string exportFileNameExt = PathHelpers::ReplaceExtension(exportFileName,"cga");
+					const string exportFileNameExt = PathUtil::ReplaceExtension(exportFileName,"cga");
 					if (!CompileToCGF(exportfile,exportFileNameExt)
 						|| !m_CC.pRC->GetAssetManager()->SaveCryasset(m_CC.config, m_CC.GetSourcePath(), { exportFileNameExt }))
 					{
@@ -513,7 +513,7 @@ bool ColladaCompiler::Process()
 			case EXPORT_CHR:
 			case EXPORT_SKIN:
 				{
-					const string exportFileNameExt = PathHelpers::ReplaceExtension(exportFileName,exportfile.type == EXPORT_SKIN ? "skin" : "chr");
+					const string exportFileNameExt = PathUtil::ReplaceExtension(exportFileName,exportfile.type == EXPORT_SKIN ? "skin" : "chr");
 					if (!CompileToCHR(exportfile,exportFileNameExt)
 						|| !m_CC.pRC->GetAssetManager()->SaveCryasset(m_CC.config, m_CC.GetSourcePath(), { exportFileNameExt }))
 					{
@@ -526,7 +526,7 @@ bool ColladaCompiler::Process()
 			// Export to ANM
 			case EXPORT_ANM:
 				{
-					const string exportFileNameExt = PathHelpers::ReplaceExtension(exportFileName,"anm");
+					const string exportFileNameExt = PathUtil::ReplaceExtension(exportFileName,"anm");
 					if (!CompileToANM(exportfile,exportFileNameExt)
 						|| !m_CC.pRC->GetAssetManager()->SaveCryasset(m_CC.config, m_CC.GetSourcePath(), { exportFileNameExt }))
 					{
@@ -539,7 +539,7 @@ bool ColladaCompiler::Process()
 			// Export to CAF
 			case EXPORT_CAF:
 				{
-					const string exportFileNameExt = PathHelpers::ReplaceExtension(exportFileName,"caf");
+					const string exportFileNameExt = PathUtil::ReplaceExtension(exportFileName,"caf");
 					if (!CompileToCAF(exportfile,exportFileNameExt)
 						|| !m_CC.pRC->GetAssetManager()->SaveCryasset(m_CC.config, m_CC.GetSourcePath(), { exportFileNameExt }))
 					{
@@ -551,7 +551,7 @@ bool ColladaCompiler::Process()
 			
 			case EXPORT_INTERMEDIATE_CAF:
 				{
-					const string exportFileNameExt = PathHelpers::ReplaceExtension(exportFileName,"i_caf");
+					const string exportFileNameExt = PathUtil::ReplaceExtension(exportFileName,"i_caf");
 					if (!CompileToCAF(exportfile,exportFileNameExt)
 						|| !m_CC.pRC->GetAssetManager()->SaveCryasset(m_CC.config, m_CC.GetSourcePath(), { exportFileNameExt }))
 					{

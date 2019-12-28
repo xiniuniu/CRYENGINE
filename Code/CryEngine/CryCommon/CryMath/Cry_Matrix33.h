@@ -1,16 +1,9 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
-
-//
-//	File:Cry_Matrix33.h
-//	Description: Common matrix class
-//
-//	History:
-//	-Feb 20,2012: Created by Ivo Herzeg
-//
-//////////////////////////////////////////////////////////////////////
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
+//! Represents a 3x3 rotational matrix
+//! \see Matrix33
 template<typename F> struct Matrix33_tpl
 	: INumberArray<F, 9>
 {
@@ -690,7 +683,7 @@ template<typename F> struct Matrix33_tpl
 		m22 = m.m00 * m.m11 - m.m10 * m.m01;
 		// calculate determinant
 		F det = (m.m00 * m00 + m.m10 * m01 + m.m20 * m02);
-		if (fabs_tpl(det) < 1E-20f)
+		if (fabs_tpl(det) < 1E-40f)
 			return 0;
 		//divide the cofactor-matrix by the determinant
 		F idet = (F)1.0 / det;

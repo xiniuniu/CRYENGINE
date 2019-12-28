@@ -1,17 +1,8 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-   ShaderCache.h : Shaders cache related declarations.
+#pragma once
 
-   Revision history:
-* Created by Honich Andrey
-
-   =============================================================================*/
-
-#ifndef __SHADERCACHE_H__
-#define __SHADERCACHE_H__
-
-#include "Shader.h" // FXDeviceShader
+#include "Shader.h"
 
 struct SPreprocessMasks
 {
@@ -94,12 +85,6 @@ struct SPreprocessTree
 };
 
 //=======================================================================================================
-
-struct SShaderLevelPolicies
-{
-	std::vector<string> m_WhiteGlobalList;
-	std::vector<string> m_WhitePerLevelList;
-};
 
 union UPipelineState // Pipeline state relevant for shader instantiation
 {
@@ -222,9 +207,6 @@ struct SShaderCombIdent
 
 //==========================================================================================================================
 
-struct SShaderCache;
-struct SShaderDevCache;
-
 class CResStreamDirCallback : public IStreamCallback
 {
 	virtual void StreamOnComplete(IReadStream* pStream, unsigned nError);
@@ -245,7 +227,6 @@ struct SResStreamEntry
 
 struct SResStreamInfo
 {
-	SShaderCache*                 m_pCache;
 	CResFile*                     m_pRes;
 	CResStreamCallback            m_Callback;
 	CResStreamDirCallback         m_CallbackDir;
@@ -256,9 +237,8 @@ struct SResStreamInfo
 	std::vector<IReadStreamPtr>   m_dirReadStreams;
 	int                           m_nDirRequestCount;
 
-	SResStreamInfo(SShaderCache* pCache)
+	SResStreamInfo()
 	{
-		m_pCache = pCache;
 		m_pRes = NULL;
 		m_nDirRequestCount = 0;
 	}
@@ -320,66 +300,6 @@ struct SResStreamInfo
 private:
 	SResStreamInfo(const SResStreamInfo&);
 	SResStreamInfo& operator=(const SResStreamInfo&);
-};
-
-struct SShaderDevCache
-{
-	int            m_nRefCount;
-	CCryNameR      m_Name;
-
-	FXDeviceShader m_DeviceShaders;
-
-	SShaderDevCache()
-	{
-		m_nRefCount = 1;
-	}
-	int  Size();
-	void GetMemoryUsage(ICrySizer* pSizer) const;
-	int  Release()
-	{
-		m_nRefCount--;
-		if (m_nRefCount)
-			return m_nRefCount;
-		delete this;
-		return 0;
-	}
-	~SShaderDevCache() {};
-};
-
-struct SShaderCache
-{
-	volatile int32  m_nRefCount;
-	CCryNameR       m_Name;
-	class CResFile* m_pRes[2];
-	SResStreamInfo* m_pStreamInfo;
-	uint32          m_nPlatform;
-	bool            m_bReadOnly[2];
-	bool            m_bValid[2];
-	bool            m_bNeedPrecache;
-	SShaderCache()
-	{
-		m_nPlatform = 0;
-		m_nRefCount = 1;
-		m_pStreamInfo = NULL;
-		m_pRes[0] = m_pRes[1] = NULL;
-		m_bValid[0] = m_bValid[1] = false;
-		m_bReadOnly[0] = m_bReadOnly[1] = false;
-		m_bNeedPrecache = false;
-	}
-	bool isValid();
-	int  Size();
-	void GetMemoryUsage(ICrySizer* pSizer) const;
-	void Cleanup();
-	int  AddRef() { return CryInterlockedIncrement(&m_nRefCount); }
-	int  Release(bool bDelete = true)
-	{
-		int nRef = CryInterlockedDecrement(&m_nRefCount);
-		if (nRef || !bDelete)
-			return nRef;
-		delete this;
-		return 0;
-	}
-	~SShaderCache();
 };
 
 struct SEmptyCombination
@@ -473,5 +393,3 @@ typedef std::map<CCryNameR, SCacheCombination>              FXShaderCacheCombina
 typedef FXShaderCacheCombinations::iterator                 FXShaderCacheCombinationsItor;
 typedef std::map<CCryNameR, std::vector<SCacheCombination>> FXShaderCacheCombinationsList;
 typedef FXShaderCacheCombinationsList::iterator             FXShaderCacheCombinationsListItor;
-
-#endif

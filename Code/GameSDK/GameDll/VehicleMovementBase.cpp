@@ -1,6 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
+#include <CryRenderer/IRenderer.h>
 #include "VehicleMovementBase.h"
 
 #include "Game.h"
@@ -12,6 +13,7 @@
 #include <CryGame/GameUtils.h>
 #include "VehicleClient.h"
 #include "GamePhysicsSettings.h"
+#include <CryRenderer/IRenderAuxGeom.h>
 
 #define RUNSOUND_FADEIN_TIME 0.5f
 #define RUNSOUND_FADEOUT_TIME 0.5f
@@ -425,7 +427,7 @@ bool CVehicleMovementBase::RequestMovement(CMovementRequest& movementRequest)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementBase::ProcessMovement(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	IPhysicalEntity* pPhysics = GetPhysics();
 	if (pPhysics==NULL)
@@ -478,7 +480,7 @@ void CVehicleMovementBase::UpdateSpeedRatio(const float deltaTime)
 //------------------------------------------------------------------------
 void CVehicleMovementBase::Update(const float deltaTime)
 {  
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	IPhysicalEntity* pPhysics = GetPhysics();
 
@@ -505,8 +507,6 @@ void CVehicleMovementBase::Update(const float deltaTime)
 	IGameObject* pGameObj = m_pVehicle->GetGameObject();
 	m_isProbablyVisible = pGameObj->IsProbablyVisible() ? 1 : 0;
 	m_isProbablyDistant = m_pVehicle->IsProbablyDistant() ? 1 : 0;
-
-	const SVehicleStatus& status = m_pVehicle->GetStatus();
 
 	// Check whether the ejection timer tripped
 	if (m_ejectionTimer>m_ejectionTimer0)
@@ -564,7 +564,7 @@ void CVehicleMovementBase::Update(const float deltaTime)
 			}
 		}
 
-		if (m_engineStartup >= m_engineIgnitionTime)		
+		if (m_engineStartup >= m_engineIgnitionTime)
 		{
 			OnEngineCompletelyStarted();
 		}
@@ -584,7 +584,7 @@ void CVehicleMovementBase::Update(const float deltaTime)
 			m_isEngineGoingOff = false;
 			m_isEnginePowered = false;
 
-			OnEngineCompletelyStopped();			
+			OnEngineCompletelyStopped();
 		}
 
 		m_pVehicle->NeedsUpdate();
@@ -1487,7 +1487,7 @@ void CVehicleMovementBase::EnableEnvEmitter(TEnvEmitter& emitter, bool enable)
 //------------------------------------------------------------------------
 void CVehicleMovementBase::UpdateExhaust(const float deltaTime)
 { 
-  FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+  CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	if (m_isProbablyDistant | (m_isProbablyVisible^1)) return;
 
@@ -1856,7 +1856,7 @@ void CVehicleMovementBase::GetParticleScale(const SEnvironmentLayer& layer, floa
 //------------------------------------------------------------------------
 void CVehicleMovementBase::UpdateSurfaceEffects(const float deltaTime)
 {
-  FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+  CRY_PROFILE_FUNCTION( PROFILE_GAME );
   
   if (0 == g_pGameCVars->v_pa_surface)
   {
@@ -1868,7 +1868,7 @@ void CVehicleMovementBase::UpdateSurfaceEffects(const float deltaTime)
   if (status.speed < 0.01f)
     return;
   
-  float distSq = m_pVehicle->GetEntity()->GetWorldPos().GetSquaredDistance(gEnv->pRenderer->GetCamera().GetPosition());
+  float distSq = m_pVehicle->GetEntity()->GetWorldPos().GetSquaredDistance(GetISystem()->GetViewCamera().GetPosition());
   if (distSq > sqr(300.f) || (distSq > sqr(50.f) && !m_isProbablyVisible))
     return;
   
@@ -2291,7 +2291,7 @@ void CVehicleMovementBase::PostSerialize()
 }
 
 //------------------------------------------------------------------------
-void CVehicleMovementBase::ProcessEvent(SEntityEvent& event)
+void CVehicleMovementBase::ProcessEvent(const SEntityEvent& event)
 { 
 }
 

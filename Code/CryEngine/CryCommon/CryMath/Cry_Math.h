@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //	File:Cry_Math.h
@@ -19,6 +19,7 @@
 //========================================================================================
 
 #include <CryCore/Platform/platform.h>
+#include <CryCore/BitFiddling.h>
 #include <cstdlib>
 #include <cfloat>
 #include <cmath>
@@ -31,7 +32,7 @@
 
 //! Only enable math asserts in debug builds
 #if defined(_DEBUG)
-	#define CRY_MATH_ASSERT(x) CRY_ASSERT_MESSAGE(x, "CRY_MATH_ASSERT")
+	#define CRY_MATH_ASSERT(x) CRY_ASSERT(x, "CRY_MATH_ASSERT")
 #else
 	#define CRY_MATH_ASSERT(x)
 #endif
@@ -58,8 +59,30 @@ constexpr f32 gf_ln2 = 0.69314718055994530941723212145818f;       //!< ln(2)
 constexpr f64 sqrt2 = 1.4142135623730950488016887242097;
 constexpr f64 sqrt3 = 1.7320508075688772935274463415059;
 
-#define DEG2RAD(a) ((a) * (gf_PI / 180.0f))
-#define RAD2DEG(a) ((a) * (180.0f / gf_PI))
+#if !defined(SWIG)
+template<typename T>
+constexpr auto DEG2RAD(T&& deg) -> decltype(deg * 1.f)
+{
+	return deg * (gf_PI / 180.0f);
+}
+
+constexpr f64 DEG2RAD(f64 deg)
+{
+	return deg * (g_PI / 180.0);
+}
+
+template<typename T>
+constexpr auto RAD2DEG(T&& rad) -> decltype(rad * 1.f)
+{
+	return rad * (180.0f / gf_PI);
+}
+
+constexpr f64 RAD2DEG(f64 rad)
+{
+	return rad * (180.0 / g_PI);
+}
+#endif
+
 
 // Define min and max as proper template
 #ifdef min
@@ -144,8 +167,9 @@ using std::floor;
 using std::ceil;
 using std::trunc;
 
-template<typename T> ILINE T clamp(T val, T lo, T hi) { return min(max(val, lo), hi); }
-template<typename T> ILINE T saturate(T val)          { return clamp(val, convert<T>(0.0f), convert<T>(1.0f)); }
+template<typename T>             ILINE T clamp   (T val, T lo, T hi) { return min(max(val, lo), hi); }
+template<typename R, typename T> ILINE R clamp_to(T val, T lo, T hi) { return R(clamp(val, lo, hi)); }
+template<typename T>             ILINE T saturate(T val)             { return clamp(val, convert<T>(0.0f), convert<T>(1.0f)); }
 
 //
 // Mathematical functions
@@ -164,7 +188,6 @@ using std::atan2;
 template<typename T> ILINE void sincos(T angle, T* pSin, T* pCos) { *pSin = sin(angle); *pCos = cos(angle); }
 
 using std::exp;
-using std::exp;
 using std::log;
 using std::pow;
 using std::sqrt;
@@ -173,7 +196,8 @@ using std::sqrt;
 // Define rcp, rsqrt, etc for different platforms.
 //
 
-#if CRY_PLATFORM_SSE2
+// _MSC_VER check is a temporary workaround for apparent compiler bug in VS 16.3: SSE version of rsqrt_fast generates incorrect code
+#if CRY_PLATFORM_SSE2 && (!defined(_MSC_VER) || _MSC_VER < 1923)
 
 ILINE f32 rcp_fast(f32 op)   { return _mm_cvtss_f32(_mm_rcp_ss(_mm_set_ss(op))); }
 ILINE f32 rcp(f32 op)        { float r = rcp_fast(op); return r * (2.0f - op * r); }
@@ -271,6 +295,16 @@ ILINE f64 sign(f64 op) { return if_else_zero(op, signnz(op)); }
 template<typename T> ILINE T hsum(T v) { return v; }
 template<typename T> ILINE T hmin(T v) { return v; }
 template<typename T> ILINE T hmax(T v) { return v; }
+
+// Name it so in order to avoid conflicts with cmath.h's "isfinite" function.
+template<typename T> ILINE bool valueisfinite(T val)
+{
+#if CRY_PLATFORM_ANDROID
+	return !std::isinf(val) && !std::isnan(val);   // Android NDK r16b/clang does not provide std::isfinite.
+#else
+	return std::isfinite(val);
+#endif
+}
 
 } // namespace crymath
 
@@ -497,13 +531,13 @@ ILINE int32 iszero(f64 x)
 	return -((u.i >> 31) ^ (u.i - 1) >> 31);
 }
 ILINE int32 iszero(int32 x)   { return -(x >> 31 ^ (x - 1) >> 31); }
-#if CRY_PLATFORM_64BIT && !defined(__clang__)
+#if !CRY_COMPILER_CLANG
 ILINE int64 iszero(__int64 x) { return -(x >> 63 ^ (x - 1) >> 63); }
 #endif
-#if CRY_PLATFORM_64BIT && defined(__clang__) && !CRY_PLATFORM_LINUX && !CRY_PLATFORM_ANDROID
+#if CRY_COMPILER_CLANG && !CRY_PLATFORM_LINUX && !CRY_PLATFORM_ANDROID
 ILINE int64 iszero(int64_t x) { return -(x >> 63 ^ (x - 1) >> 63); }
 #endif
-#if CRY_PLATFORM_64BIT && (CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE)
+#if (CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE)
 ILINE int64 iszero(long int x) { return -(x >> 63 ^ (x - 1) >> 63); }
 #endif
 
@@ -531,21 +565,7 @@ ILINE float approxOneExp(float x) { return x * crymath::rcp_fast(1.f + x); }
 //! \return i if x==1<<i (i=0..63)
 ILINE int ilog2(uint64 x)
 {
-#if CRY_PLATFORM_X64 && CRY_COMPILER_MSVC
-	unsigned long i;
-	_BitScanReverse64(&i, x);
-	return i;
-#elif CRY_COMPILER_CLANG || CRY_COMPILER_GCC
-	return __builtin_clzll(x);
-#else
-	union
-	{
-		float f;
-		uint  i;
-	} u;
-	u.f = (float)x;
-	return (u.i >> 23) - 127;
-#endif
+	return (int)IntegerLog2(x);
 }
 
 const int32 inc_mod3[] = { 1, 2, 0 }, dec_mod3[] = { 2, 0, 1 };
@@ -620,7 +640,7 @@ template<typename T> ILINE void SmoothCD(
 	else
 	{
 		val = to;
-		valRate -= valRate; // zero it...
+		valRate = (T)(valRate - valRate); // zero it...
 	}
 }
 
@@ -660,7 +680,7 @@ template<typename T> ILINE void SmoothCDWithMaxRate(
 	else
 	{
 		val = to;
-		valRate -= valRate; // zero it...
+		valRate = (T)(valRate - valRate); // zero it...
 	}
 }
 #pragma warning(pop)

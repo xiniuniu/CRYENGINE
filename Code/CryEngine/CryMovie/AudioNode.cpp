@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AudioNode.h"
@@ -36,7 +36,6 @@ void CAudioNode::Initialize()
 		AudioNode::s_audioParams.reserve(4);
 
 		AudioNode::AddSupportedParam("Trigger", eAnimParamType_AudioTrigger, eAnimValue_Unknown);
-		AudioNode::AddSupportedParam("File", eAnimParamType_AudioFile, eAnimValue_Unknown);
 		AudioNode::AddSupportedParam("Parameter", eAnimParamType_AudioParameter, eAnimValue_Float);
 		AudioNode::AddSupportedParam("Switch", eAnimParamType_AudioSwitch, eAnimValue_Unknown);
 	}
@@ -47,7 +46,6 @@ void CAudioNode::Animate(SAnimContext& animContext)
 	size_t numAudioParameterTracks = 0;
 	size_t numAudioTriggerTracks = 0;
 	size_t numAudioSwitchTracks = 0;
-	size_t numAudioFileTracks = 0;
 
 	const int trackCount = NumTracks();
 	for (int paramIndex = 0; paramIndex < trackCount; ++paramIndex)
@@ -84,6 +82,7 @@ void CAudioNode::Animate(SAnimContext& animContext)
 						if (audioTriggerInfo.audioKeyStart < audioTriggerKeyNum)
 						{
 							ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId);
+							m_activeAudioTriggers.emplace_back(audioTriggerKey);
 						}
 
 						if (audioTriggerInfo.audioKeyStart > audioTriggerKeyNum)
@@ -107,6 +106,8 @@ void CAudioNode::Animate(SAnimContext& animContext)
 								{
 									ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId, false);
 								}
+
+								m_activeAudioTriggers.erase(std::remove(m_activeAudioTriggers.begin(), m_activeAudioTriggers.end(), audioTriggerKey), m_activeAudioTriggers.end());
 							}
 						}
 						else
@@ -118,45 +119,6 @@ void CAudioNode::Animate(SAnimContext& animContext)
 					{
 						audioTriggerInfo.audioKeyStart = -1;
 						audioTriggerInfo.audioKeyStop = -1;
-					}
-				}
-			}
-			break;
-
-		case eAnimParamType_AudioFile:
-			{
-				++numAudioFileTracks;
-
-				if (numAudioFileTracks > m_audioFileTracks.size())
-				{
-					m_audioFileTracks.resize(numAudioFileTracks);
-				}
-
-				if (!animContext.bResetting && !bMuted)
-				{
-					SAudioFileKey audioFileKey;
-					SAudioInfo& audioFileInfo = m_audioFileTracks[numAudioFileTracks - 1];
-					const int audioFileKeyNum = static_cast<CAudioFileTrack*>(pTrack)->GetActiveKey(animContext.time, &audioFileKey);
-					if (audioFileKeyNum >= 0 && audioFileKey.m_duration > SAnimTime(0) && !(audioFileKey.m_bNoTriggerInScrubbing && animContext.bSingleFrame))
-					{
-						const SAnimTime audioKeyTime = (animContext.time - audioFileKey.m_time);
-						if (animContext.time <= audioFileKey.m_time + audioFileKey.m_duration)
-						{
-							if (audioFileInfo.audioKeyStart < audioFileKeyNum)
-							{
-								ApplyAudioFileKey(audioFileKey.m_audioFile, audioFileKey.m_bIsLocalized);
-							}
-
-							audioFileInfo.audioKeyStart = audioFileKeyNum;
-						}
-						else if (audioKeyTime >= audioFileKey.m_duration)
-						{
-							audioFileInfo.audioKeyStart = -1;
-						}
-					}
-					else
-					{
-						audioFileInfo.audioKeyStart = -1;
 					}
 				}
 			}
@@ -215,12 +177,33 @@ void CAudioNode::Animate(SAnimContext& animContext)
 	}
 }
 
+void CAudioNode::OnStart()
+{
+	CRY_ASSERT(m_activeAudioTriggers.empty(), "m_activeAudioTriggers is not empty during CAudioNode::OnStart");
+}
+
 void CAudioNode::OnReset()
 {
 	m_audioParameterTracks.clear();
 	m_audioTriggerTracks.clear();
 	m_audioSwitchTracks.clear();
-	m_audioFileTracks.clear();
+}
+
+void CAudioNode::OnStop()
+{
+	for (auto const& audioTriggerKey : m_activeAudioTriggers)
+	{
+		if (audioTriggerKey.m_stopTriggerId != CryAudio::InvalidControlId)
+		{
+			ApplyAudioTriggerKey(audioTriggerKey.m_stopTriggerId);
+		}
+		else
+		{
+			ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId, false);
+		}
+	}
+
+	m_activeAudioTriggers.clear();
 }
 
 unsigned int CAudioNode::GetParamCount() const
@@ -252,15 +235,6 @@ bool CAudioNode::GetParamInfoFromType(const CAnimParamType& paramId, SParamInfo&
 	}
 
 	return false;
-}
-
-void CAudioNode::ApplyAudioFileKey(const string& filePath, const bool bLocalized)
-{
-	if (!filePath.empty())
-	{
-		CryAudio::SPlayFileInfo const info(filePath.c_str(), bLocalized);
-		gEnv->pAudioSystem->PlayFile(info);
-	}
 }
 
 void CAudioNode::ApplyAudioSwitchKey(CryAudio::ControlId audioSwitchId, CryAudio::SwitchStateId audioSwitchStateId)

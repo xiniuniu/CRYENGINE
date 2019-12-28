@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System;
 using CryEngine.Common;
@@ -33,16 +33,25 @@ namespace CryEngine
 			AddListener();
 
 			Engine.EndReload += AddListener;
+			Engine.StartReload += RemoveListener;
 		}
 
-		void AddListener()
+		private void AddListener()
 		{
 			Engine.System.GetISystemEventDispatcher().RegisterListener(this, "SystemEventHandler.cs");
 		}
 
+		private void RemoveListener()
+		{
+			Engine.System.GetISystemEventDispatcher()?.RemoveListener(this);
+		}
+
+		/// <summary>
+		/// Disposes the SystemEventHandler.
+		/// </summary>
 		public override void Dispose()
 		{
-			Engine.System.GetISystemEventDispatcher().RemoveListener(this);
+			RemoveListener();
 
 			base.Dispose();
 		}
@@ -72,6 +81,13 @@ namespace CryEngine
 						EditorGameStart();
 					if (wparam == 0 && EditorGameEnded != null)
 						EditorGameEnded();
+					break;
+				case ESystemEvent.ESYSTEM_EVENT_FULL_SHUTDOWN:
+				case ESystemEvent.ESYSTEM_EVENT_FAST_SHUTDOWN:
+					LevelSystem.Instance.RemoveListener();
+					Input.RemoveListener();
+					AudioManager.RemoveListener();
+					Mouse.RemoveListener();
 					break;
 			}
 		}

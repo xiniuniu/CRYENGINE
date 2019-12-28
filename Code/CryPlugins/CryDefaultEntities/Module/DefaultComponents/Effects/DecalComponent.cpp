@@ -2,6 +2,7 @@
 #include "DecalComponent.h"
 
 #include <Cry3DEngine/IRenderNode.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 namespace Cry
 {
@@ -35,7 +36,7 @@ void CDecalComponent::Initialize()
 	}
 }
 
-void CDecalComponent::ProcessEvent(SEntityEvent& event)
+void CDecalComponent::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -52,16 +53,49 @@ void CDecalComponent::ProcessEvent(SEntityEvent& event)
 	}
 }
 
-uint64 CDecalComponent::GetEventMask() const
+Cry::Entity::EventFlags CDecalComponent::GetEventMask() const
 {
-	uint64 bitFlags = (m_bFollowEntityAfterSpawn && m_bSpawned) ? BIT64(ENTITY_EVENT_XFORM) : 0;
-	if (m_bSpawned)
-	{
-		bitFlags |= BIT64(ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED);
-	}
+	Cry::Entity::EventFlags bitFlags = (m_bFollowEntityAfterSpawn && m_bSpawned) ? ENTITY_EVENT_XFORM : Cry::Entity::EventFlags();
+	bitFlags |= ENTITY_EVENT_COMPONENT_PROPERTY_CHANGED;
 
 	return bitFlags;
 }
+
+#ifndef RELEASE
+void CDecalComponent::Render(const IEntity& entity, const IEntityComponent& component, SEntityPreviewContext& context) const
+{
+	if (context.bSelected)
+	{
+		const ColorB color = context.debugDrawInfo.color;
+
+		const Matrix34& slotTransform = m_pEntity->GetSlotWorldTM(GetEntitySlotId());
+
+		IRenderAuxGeom* pAuxRenderer = gEnv->pAuxGeomRenderer;
+
+		const Vec3 x1(slotTransform.TransformPoint(Vec3(-1, 0, 0)));
+		const Vec3 x2(slotTransform.TransformPoint(Vec3(1, 0, 0)));
+		const Vec3 y1(slotTransform.TransformPoint(Vec3(0, -1, 0)));
+		const Vec3 y2(slotTransform.TransformPoint(Vec3(0, 1, 0)));
+		const Vec3 p(slotTransform.TransformPoint(Vec3(0, 0, 0)));
+		const Vec3 n(slotTransform.TransformPoint(Vec3(0, 0, 1)));
+
+		pAuxRenderer->DrawLine(p, color, n, color);
+		pAuxRenderer->DrawLine(x1, color, x2, color);
+		pAuxRenderer->DrawLine(y1, color, y2, color);
+
+		const Vec3 p0 = slotTransform.TransformPoint(Vec3(-1, -1, 0));
+		const Vec3 p1 = slotTransform.TransformPoint(Vec3(-1, 1, 0));
+		const Vec3 p2 = slotTransform.TransformPoint(Vec3(1, 1, 0));
+		const Vec3 p3 = slotTransform.TransformPoint(Vec3(1, -1, 0));
+		pAuxRenderer->DrawLine(p0, color, p1, color);
+		pAuxRenderer->DrawLine(p1, color, p2, color);
+		pAuxRenderer->DrawLine(p2, color, p3, color);
+		pAuxRenderer->DrawLine(p3, color, p0, color);
+		pAuxRenderer->DrawLine(p0, color, p2, color);
+		pAuxRenderer->DrawLine(p1, color, p3, color);
+	}
+}
+#endif
 
 void CDecalComponent::SetMaterialFileName(const char* szPath)
 {

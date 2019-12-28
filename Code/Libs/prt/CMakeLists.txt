@@ -14,9 +14,11 @@ add_sources("NoUberFile"
 		"../../Tools/PRT/Legendre.h"
 		"../../Tools/PRT/MaterialFactory.h"
 		"../../Tools/PRT/MeshCoefficientStreams.h"
+		"../../Tools/PRT/ObjFace.h"
 		"../../Tools/PRT/PRTTypes.h"
 		"../../Tools/PRT/QuantizedSamplesHolder.h"
 		"../../Tools/PRT/SHAllocator.h"
+		"../../Tools/PRT/SHCompressionInfo.h"
 		"../../Tools/PRT/SHCompressor.h"
 		"../../Tools/PRT/SHFramework.h"
 		"../../Tools/PRT/SHFrameworkBasis.h"
@@ -90,7 +92,7 @@ add_sources("NoUberFile"
 end_sources()
 #END-FILE-LIST
 
-if(WIN64)
+if(WINDOWS)
 	CryEngineStaticModule(prt SOLUTION_FOLDER "Libs")
 
 	target_include_directories(${THIS_PROJECT}

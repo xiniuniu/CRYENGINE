@@ -1,6 +1,11 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 #include "CCryVKShaderReflection.hpp"
 #include "../../../../../../../Code/Tools/HLSLCrossCompiler/src/reflect.inl"
+
+#include <sstream>
+#include <fstream>
 
 HRESULT D3D10CreateBlob(size_t NumBytes, ID3DBlob** ppBuffer)
 {
@@ -13,11 +18,243 @@ HRESULT D3DDisassemble(const void* pShader, size_t BytecodeLength, uint32 nFlags
 	return S_OK;
 }
 
+void DumpWarning(const char* str)
+{
+	CryLogAlways("[Vk Compiler] Warning: %s", str);
+	fwrite(str, sizeof(char), strlen(str), stderr);
+}
+
+void DumpError(const char* str)
+{
+	CRY_ASSERT(false, "[Vk Compiler] ERROR: %s", str);
+	CryLogAlways("[Vk Compiler] ERROR: %s", str);
+	fwrite(str, sizeof(char), strlen(str), stderr);
+}
+ 
+bool ShellExecute(const std::string& file, const std::string& parameters, const std::string& workingDir = "")
+{
+#ifdef WIN32
+	HANDLE childStdInRead;
+	HANDLE childStdInWrite;
+	HANDLE childStdOutRead;
+	HANDLE childStdOutWrite;
+
+	SECURITY_ATTRIBUTES securityAttributes;
+	securityAttributes.nLength = sizeof(SECURITY_ATTRIBUTES);
+	securityAttributes.bInheritHandle = true;
+	securityAttributes.lpSecurityDescriptor = nullptr;
+
+	CreatePipe(&childStdInRead, &childStdInWrite, &securityAttributes, 0);
+	SetHandleInformation(childStdInWrite, HANDLE_FLAG_INHERIT, 0);
+
+	CreatePipe(&childStdOutRead, &childStdOutWrite, &securityAttributes, 0);
+	SetHandleInformation(childStdOutRead, HANDLE_FLAG_INHERIT, 0);
+
+	PROCESS_INFORMATION processInfo = { 0 };
+	STARTUPINFO startUpInfo = { 0 };
+
+	startUpInfo.cb = sizeof(STARTUPINFO);
+	startUpInfo.hStdInput = childStdInRead;
+	startUpInfo.hStdOutput = childStdOutWrite;
+	startUpInfo.hStdError = childStdOutWrite;
+	startUpInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+	char parametersTemp[4096];
+	sprintf_s(parametersTemp, 4096, "%s %s", file.c_str(), parameters.c_str());
+
+	std::string output;
+
+	CreateProcess(nullptr, parametersTemp, nullptr, nullptr, true, CREATE_NO_WINDOW, nullptr, workingDir.size() == 0 ? nullptr : workingDir.c_str(), &startUpInfo, &processInfo);
+	while (WaitForSingleObject(processInfo.hProcess, 100) == WAIT_TIMEOUT)
+	{
+		unsigned long size = GetFileSize(childStdOutRead, nullptr);
+
+		if (size != 0)
+		{
+			std::string outputTemp;
+			outputTemp.resize(size);
+
+			unsigned long readBytes;
+			ReadFile(childStdOutRead, &outputTemp[0], size, &readBytes, nullptr);
+
+			output += outputTemp;
+		}
+	}
+
+	unsigned long size = GetFileSize(childStdOutRead, nullptr);
+
+	if (size != 0)
+	{
+		std::string outputTemp;
+		outputTemp.resize(size);
+
+		unsigned long readBytes;
+		ReadFile(childStdOutRead, &outputTemp[0], size, &readBytes, nullptr);
+
+		output += outputTemp;
+	}
+
+	unsigned long exitCode;
+	GetExitCodeProcess(processInfo.hProcess, &exitCode);
+
+	if (exitCode != 0)
+	{
+		// convert 'ERROR' to 'error' as remote compiler 
+		// doesn't report upper case version
+		size_t curPos = output.find("ERROR:", 0);
+		while (curPos != std::string::npos)
+		{
+			output.replace(curPos, 5, "error");
+			curPos = output.find("ERROR:", curPos + 1);
+		}
+
+		DumpError(output.c_str());
+	}
+	else
+	{
+		if (output.size() > 0)
+			DumpWarning(output.c_str());
+	}
+
+	CloseHandle(processInfo.hProcess);
+	CloseHandle(processInfo.hThread);
+
+	CloseHandle(childStdInRead);
+	CloseHandle(childStdInWrite);
+	CloseHandle(childStdOutRead);
+	CloseHandle(childStdOutWrite);
+
+	return exitCode == 0;
+#else
+	CryFatalError("Cannot run the process! ShellExecute is implemented ONLY for Windows Platform.");
+	return false;
+#endif
+}
+
+static const char* GetGLSLANGTargetName(const char* pDxTarget)
+{
+	if (strncmp(pDxTarget, "vs", 2) == 0)
+	{
+		return "vert";
+	}
+	else if (strncmp(pDxTarget, "ps", 2) == 0)
+	{
+		return "frag";
+	}
+	else if (strncmp(pDxTarget, "gs", 2) == 0)
+	{
+		return "geom";
+	}
+	else if (strncmp(pDxTarget, "ds", 2) == 0)
+	{
+		return "tesc";
+	}
+	else if (strncmp(pDxTarget, "hs", 2) == 0)
+	{
+		return "tese";
+	}
+	else if (strncmp(pDxTarget, "cs", 2) == 0)
+	{
+		return "comp";
+	}
+
+	return "invalid";
+}
+
+#define INPUT_HLSL_FORMAT                    ".in"
+#define OUTPUT_SPIRV_FORMAT                  ".out"
+#define OUTPUT_HUMAN_READABLE_SPIRV_FORMAT   ".h_spv"
 HRESULT D3DCompile(_In_reads_bytes_(SrcDataSize) LPCVOID pSrcData, _In_ SIZE_T SrcDataSize, _In_opt_ LPCSTR pSourceName, CONST D3D_SHADER_MACRO* pDefines,
                    _In_opt_ ID3DInclude* pInclude, _In_opt_ LPCSTR pEntrypoint, _In_ LPCSTR pTarget, _In_ UINT Flags1, _In_ UINT Flags2, _Out_ ID3DBlob** ppCode,
                    _Always_(_Outptr_opt_result_maybenull_) ID3DBlob** ppErrorMsgs)
 {
-	VK_NOT_IMPLEMENTED
+	static const char* const szTmpShaderPath = "%USER%/shaders/temp/";
+	if (!CryDirectoryExists(szTmpShaderPath))
+	{
+		gEnv->pCryPak->MakeDir(szTmpShaderPath);
+	}
+	CryPathString shaderPathWithoutFormat;
+	gEnv->pCryPak->AdjustFileName(szTmpShaderPath, shaderPathWithoutFormat, ICryPak::FLAGS_FOR_WRITING);
+	shaderPathWithoutFormat += pSourceName;
+	shaderPathWithoutFormat += '_';
+	shaderPathWithoutFormat += pEntrypoint;
+
+	std::ofstream shaderFile;
+	shaderFile.open(shaderPathWithoutFormat + INPUT_HLSL_FORMAT);
+	if (!shaderFile.good())
+	{
+		CRY_ASSERT(shaderFile.good(), ("Cannot create " + shaderPathWithoutFormat + INPUT_HLSL_FORMAT + " shader file.").c_str());
+		return E_FAIL;
+	}
+
+	shaderFile.write((const char*)pSrcData, SrcDataSize);
+	shaderFile.close();
+
+	std::string vkShaderCompiler(CRendererCVars::CV_r_VkShaderCompiler->GetString());
+	if (vkShaderCompiler == STR_VK_SHADER_COMPILER_HLSLCC)
+	{
+		char params[1001];
+		cry_sprintf(params, "%s %s \"%s%s\" \"%s%s\"",
+			pEntrypoint,
+			pTarget,
+			shaderPathWithoutFormat.c_str(), OUTPUT_SPIRV_FORMAT,
+			shaderPathWithoutFormat.c_str(), INPUT_HLSL_FORMAT
+			);
+
+		ShellExecute("%ENGINE%\\..\\Tools\\RemoteShaderCompiler\\Compiler\\SPIRV\\V002\\HLSL2SPIRV.exe", params, "%ENGINE%\\..\\Tools\\RemoteShaderCompiler\\Compiler\\SPIRV\\V002");
+	}
+	else if (vkShaderCompiler == STR_VK_SHADER_COMPILER_DXC)
+	{
+		bool showWarnings = false;
+		
+		const bool needsInvertingY = strncmp(pTarget, "vs", 2) == 0 || strncmp(pTarget, "ds", 2) == 0 || strncmp(pTarget, "gs", 2) == 0;
+
+		char params[1001];
+		cry_sprintf(params, " %s %s -Zpr -spirv %s -E %s -T %s -Fo \"%s%s\" -Fc \"%s%s\" \"%s%s\"",
+			needsInvertingY ? "-fvk-invert-y" : "",
+			CRenderer::CV_r_shadersdebug == 3 ? "-Od" : "-O3",
+			showWarnings ? "" : "-no-warnings",
+			pEntrypoint,
+			pTarget,
+			shaderPathWithoutFormat.c_str(), OUTPUT_SPIRV_FORMAT,
+			shaderPathWithoutFormat.c_str(), OUTPUT_HUMAN_READABLE_SPIRV_FORMAT,
+			shaderPathWithoutFormat.c_str(), INPUT_HLSL_FORMAT);
+
+		ShellExecute("%ENGINE%\\..\\Tools\\RemoteShaderCompiler\\Compiler\\SPIRV\\V006\\dxc\\dxc.exe", params);
+	}
+	else if (vkShaderCompiler == STR_VK_SHADER_COMPILER_GLSLANG)
+	{
+		std::string targetEnv = "vulkan1.0";
+		
+		const bool needsInvertingY = strncmp(pTarget, "vs", 2) == 0 || strncmp(pTarget, "ds", 2) == 0 || strncmp(pTarget, "gs", 2) == 0;
+
+		char params[1001];
+		cry_sprintf(params, " -D -fhlsl_functionality1 \"%s%s\" -o \"%s%s\" --target-env %s -S %s -e %s -V100 %s",
+			shaderPathWithoutFormat.c_str(), INPUT_HLSL_FORMAT,
+			shaderPathWithoutFormat.c_str(), OUTPUT_SPIRV_FORMAT,
+			targetEnv.c_str(),
+			GetGLSLANGTargetName(pTarget),
+			pEntrypoint,
+			needsInvertingY ? "--invert-y" : "");
+
+		ShellExecute("%ENGINE%\\..\\Tools\\RemoteShaderCompiler\\Compiler\\SPIRV\\V003\\glslang\\glslangValidator.exe", params);
+	}
+
+	std::ifstream spirvShaderFile(shaderPathWithoutFormat + OUTPUT_SPIRV_FORMAT, std::ios::binary);
+	if (!spirvShaderFile.good())
+	{
+		CRY_ASSERT(false, (shaderPathWithoutFormat + OUTPUT_SPIRV_FORMAT + " cannot be opened").c_str());
+		return E_FAIL;
+	}
+
+	std::string spirvSrcStr(
+		(std::istreambuf_iterator<char>(spirvShaderFile)),
+		std::istreambuf_iterator<char>()
+	);
+
+	D3DCreateBlob(spirvSrcStr.size(), ppCode);
+	memcpy((*ppCode)->GetBufferPointer(), spirvSrcStr.c_str(), spirvSrcStr.size());
+
 	return S_OK;
 }
 
@@ -49,6 +286,7 @@ CCryVKShaderReflection::CCryVKShaderReflection(const void* pShaderBytecode, size
 	const uint32* pByteCodeStart = reinterpret_cast<const uint32*>(pShaderBytecode);
 	const uint32* pByteCodeEnd = pByteCodeStart + BytecodeLength / 4;
 
+	std::string vkShaderCompiler(CRendererCVars::CV_r_VkShaderCompiler->GetString());
 	m_pCompiler = stl::make_unique<spirv_cross::Compiler>(std::vector<uint32>(pByteCodeStart, pByteCodeEnd));
 	m_shaderResources = m_pCompiler->get_shader_resources();
 
@@ -57,12 +295,35 @@ CCryVKShaderReflection::CCryVKShaderReflection(const void* pShaderBytecode, size
 	{
 		for (auto& input : m_shaderResources.stage_inputs)
 		{
-			SInputParameter inputParam;
+			uint32_t location = m_pCompiler->get_decoration(input.id, spv::DecorationLocation);
 
-			if (sscanf(input.name.c_str(), "dcl_Input%d_%[a-zA-Z]%d", &inputParam.attributeLocation, inputParam.semanticName, &inputParam.semanticIndex) == 3)
+			SInputParameter inputParam;
+			inputParam.semanticIndex = 0;
+
+			if (vkShaderCompiler == STR_VK_SHADER_COMPILER_HLSLCC)
 			{
-				UnformatVariableName(inputParam.semanticName);
-				m_shaderInputs.push_back(inputParam);
+				if (sscanf(input.name.c_str(), "dcl_Input%d_%[a-zA-Z]%d", &inputParam.attributeLocation, inputParam.semanticName, &inputParam.semanticIndex) == 3)
+				{
+					UnformatVariableName(inputParam.semanticName);
+					m_shaderInputs.push_back(inputParam);
+				}
+			}
+			else if (vkShaderCompiler == STR_VK_SHADER_COMPILER_DXC)
+			{
+				if(sscanf(input.name.c_str(), "in_var_%[a-zA-Z]%d", inputParam.semanticName, &inputParam.semanticIndex) >= 1)
+				{
+					inputParam.attributeLocation = location;
+					m_shaderInputs.push_back(inputParam);
+				}
+			}
+			else if (vkShaderCompiler == STR_VK_SHADER_COMPILER_GLSLANG)
+			{
+				std::string semanticsName = m_pCompiler->get_decoration_string(input.id, spv::DecorationHlslSemanticGOOGLE);
+				if (sscanf(semanticsName.c_str(), "%[a-zA-Z]%d", inputParam.semanticName, &inputParam.semanticIndex) >= 1)
+				{
+					inputParam.attributeLocation = location;
+					m_shaderInputs.push_back(inputParam);
+				}
 			}
 		}
 	}
@@ -73,10 +334,7 @@ CCryVKShaderReflection::CCryVKShaderReflection(const void* pShaderBytecode, size
 		for (UINT localListIndex = 0; localListIndex < pResourceList->size(); ++localListIndex)
 		{
 			spirv_cross::Resource& resource = pResourceList->at(localListIndex);
-
 			const spirv_cross::SPIRType& resourceType = m_pCompiler->get_type(resource.type_id);
-			uint32 descriptorIndex = m_pCompiler->get_decoration(resource.base_type_id, spv::DecorationBinding);
-			uint32 setIndex = m_pCompiler->get_decoration(resource.base_type_id, spv::DecorationDescriptorSet);
 
 			struct isEqual
 			{
@@ -92,55 +350,89 @@ CCryVKShaderReflection::CCryVKShaderReflection(const void* pShaderBytecode, size
 			// "Sampler";
 			// "Unordered";
 			// "Buffer";
-			char semanticTypeT[128];
-			char semanticTypeS[128];
 			SResourceBinding resourceBindingT;
 			SResourceBinding resourceBindingS;
 
 			resourceBindingT.semanticType = D3D10_SIT_TEXTURE;
 			resourceBindingS.semanticType = D3D10_SIT_SAMPLER;
 
-			if (sscanf(resource.name.c_str(), "dcl_%[a-zA-Z]%d_%[a-zA-Z]_%[a-zA-Z]%d_%[a-zA-Z]",
-				semanticTypeT, &resourceBindingT.bindPoint, resourceBindingT.semanticName,
-				semanticTypeS, &resourceBindingS.bindPoint, resourceBindingS.semanticName) == 6)
+			if (CRendererCVars::CV_r_VkShaderCompiler && strcmp(CRendererCVars::CV_r_VkShaderCompiler->GetString(), STR_VK_SHADER_COMPILER_HLSLCC))
 			{
-				UnformatVariableName(resourceBindingT.semanticName);
-				UnformatVariableName(resourceBindingS.semanticName);
+				char semanticTypeT[128];
+				char semanticTypeS[128];
 
-				if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingT.semanticName)) == m_shaderBindings.end())
-					m_shaderBindings.push_back(resourceBindingT);
-				if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingS.semanticName)) == m_shaderBindings.end())
-					m_shaderBindings.push_back(resourceBindingS);
-			}
+				if (sscanf_s(resource.name.c_str(), "dcl_%[a-zA-Z]%d_%[a-zA-Z]_%[a-zA-Z]%d_%[a-zA-Z]",
+					semanticTypeT, sizeof(semanticTypeT), &resourceBindingT.bindPoint, resourceBindingT.semanticName, sizeof(resourceBindingT.semanticName),
+					semanticTypeS, sizeof(semanticTypeS), &resourceBindingS.bindPoint, resourceBindingS.semanticName, sizeof(resourceBindingS.semanticName)) == 6)
+				{
+					UnformatVariableName(resourceBindingT.semanticName);
+					UnformatVariableName(resourceBindingS.semanticName);
 
-			else if (sscanf(resource.name.c_str(), "dcl_%[a-zA-Z]%d_%[a-zA-Z]",
-				semanticTypeT, &resourceBindingT.bindPoint, resourceBindingT.semanticName) == 3)
-			{
-				UnformatVariableName(resourceBindingT.semanticName);
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingT.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBindingT);
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingS.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBindingS);
+				}
 
-				if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingT.semanticName)) == m_shaderBindings.end())
-					m_shaderBindings.push_back(resourceBindingT);
+				else if (sscanf_s(resource.name.c_str(), "dcl_%[a-zA-Z]%d_%[a-zA-Z]",
+					semanticTypeT, sizeof(semanticTypeT), &resourceBindingT.bindPoint, resourceBindingT.semanticName, sizeof(resourceBindingT.semanticName)) == 3)
+				{
+					UnformatVariableName(resourceBindingT.semanticName);
+
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingT.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBindingT);
+				}
+				else
+				{
+					SResourceBinding resourceBinding;
+					resourceBinding.bindPoint = 0;
+					strcpy(resourceBinding.semanticName, resource.name.c_str());
+					switch (resourceType.basetype)
+					{
+					case spirv_cross::SPIRType::SampledImage:
+					case spirv_cross::SPIRType::Sampler:
+						resourceBinding.semanticType = D3D10_SIT_SAMPLER;
+						break;
+					case spirv_cross::SPIRType::Image:
+						resourceBinding.semanticType = D3D10_SIT_TEXTURE;
+						break;
+					default:
+						VK_NOT_IMPLEMENTED;
+					}
+
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBinding.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBinding);
+				}
 			}
 			else
 			{
-				SResourceBinding resourceBinding;
-				resourceBinding.bindPoint = 0;
-				strcpy(resourceBinding.semanticName, resource.name.c_str());
-				switch (resourceType.basetype)
-				{
-				case spirv_cross::SPIRType::SampledImage:
-				case spirv_cross::SPIRType::Sampler:
-					resourceBinding.semanticType = D3D10_SIT_SAMPLER;
-					break;
-				case spirv_cross::SPIRType::Image:
-					resourceBinding.semanticType = D3D10_SIT_TEXTURE;
-					break;
-				default:
-					VK_NOT_IMPLEMENTED;
-				}
 
-				if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBinding.semanticName)) == m_shaderBindings.end())
-					m_shaderBindings.push_back(resourceBinding);
+				auto type = m_pCompiler->get_type(resource.type_id);
+				auto binding = m_pCompiler->get_decoration(resource.id, spv::DecorationBinding);
+
+				resourceBindingT.bindPoint = binding;
+				resourceBindingS.bindPoint = binding;
+
+				strcpy(resourceBindingT.semanticName, resource.name.c_str());
+				strcpy(resourceBindingS.semanticName, resource.name.c_str());
+
+				if (type.basetype == spirv_cross::SPIRType::BaseType::SampledImage)
+				{
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingT.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBindingT);
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingS.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBindingS);
+				}
+				else if (type.basetype == spirv_cross::SPIRType::BaseType::Image)
+				{
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingT.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBindingT);
+				}
+				else if (type.basetype == spirv_cross::SPIRType::BaseType::Sampler)
+				{
+					if (std::find_if(m_shaderBindings.begin(), m_shaderBindings.end(), isEqual(resourceBindingS.semanticName)) == m_shaderBindings.end())
+						m_shaderBindings.push_back(resourceBindingS);
+				}
 			}
 		}
 	}
@@ -280,8 +572,15 @@ CCryVKShaderReflectionVariable::CCryVKShaderReflectionVariable(CCryVKShaderRefle
 
 	const std::string& variableName = compiler.get_member_name(constantBuffer.base_type_id, memberIndex);
 
-	strncpy(m_name, variableName.c_str() + 1 /* skip ShaderTypePrefix() */, sizeof(m_name));
-	UnformatVariableName(m_name);
+	if (CRendererCVars::CV_r_VkShaderCompiler && strcmp(CRendererCVars::CV_r_VkShaderCompiler->GetString(), STR_VK_SHADER_COMPILER_HLSLCC) == 0)
+	{
+		strncpy(m_name, variableName.c_str() + 1 /* skip ShaderTypePrefix() */, sizeof(m_name) - 1);
+		UnformatVariableName(m_name);
+	}
+	else
+	{
+		strncpy(m_name, variableName.c_str(), sizeof(m_name) - 1);
+	}
 }
 
 HRESULT STDMETHODCALLTYPE CCryVKShaderReflectionVariable::GetDesc(D3D11_SHADER_VARIABLE_DESC* pDesc)
@@ -369,11 +668,29 @@ CCryVKShaderReflectionConstantBuffer::CCryVKShaderReflectionConstantBuffer(CCryV
 	m_usedVariables = compiler.get_active_buffer_ranges(m_resource.id);
 
 	std::string name = !m_resource.name.empty() ? m_resource.name : compiler.get_fallback_name(m_resource.base_type_id);
-	int bindPoint = 0;
+	int bindPoint = compiler.get_decoration(m_resource.id, spv::DecorationBinding);
+	//int space = compiler.get_decoration(m_resource.id, spv::DecorationSpecId);
 
-	if (sscanf(name.c_str(), "dcl_ConstantBuffer%d_%[a-zA-Z]", &bindPoint, m_name) == 2)
+	
+	std::string vkShaderCompiler(CRendererCVars::CV_r_VkShaderCompiler->GetString());
+
+	if (vkShaderCompiler == STR_VK_SHADER_COMPILER_HLSLCC)
 	{
-		UnformatVariableName(m_name);
+		if (sscanf_s(name.c_str(), "dcl_ConstantBuffer%d_%[a-zA-Z]", &bindPoint, m_name, sizeof(m_name)) == 2)
+		{
+			UnformatVariableName(m_name);
+		}
+	}
+	else if (vkShaderCompiler == STR_VK_SHADER_COMPILER_DXC)
+	{
+		if (sscanf_s(name.c_str(), "type_%[a-zA-Z_]", m_name, sizeof(m_name)) != 1)
+		{
+			CRY_ASSERT(false, "Constant buffer name format is not covered.");
+		}
+	}
+	else if (vkShaderCompiler == STR_VK_SHADER_COMPILER_GLSLANG)
+	{
+		cry_strcpy(m_name, name.c_str());
 	}
 
 	const spirv_cross::SPIRType& structType = compiler.get_type(m_resource.type_id);
@@ -389,7 +706,10 @@ HRESULT STDMETHODCALLTYPE CCryVKShaderReflectionConstantBuffer::GetDesc(D3D11_SH
 	pDesc->Name = m_name;
 	pDesc->Type = D3D_CT_CBUFFER;
 	pDesc->Variables = structType.member_types.size();
-	pDesc->Size = compiler.get_declared_struct_size(structType);
+	if (pDesc->Variables > 0)
+	{
+		pDesc->Size = compiler.get_declared_struct_size(structType);
+	}
 
 	return S_OK;
 }
@@ -398,10 +718,7 @@ ID3D11ShaderReflectionVariable* STDMETHODCALLTYPE CCryVKShaderReflectionConstant
 {
 	if (!m_variables[Index])
 	{
-		spirv_cross::Compiler& compiler = *m_pShaderReflection->m_pCompiler;
-		const spirv_cross::SPIRType& structType = compiler.get_type(m_resource.type_id);
-
-		CRY_ASSERT(Index < structType.member_types.size());
+		CRY_ASSERT(Index < (*m_pShaderReflection->m_pCompiler).get_type(m_resource.type_id).member_types.size());
 
 		bool bInUse = false;
 		for (auto& range : m_usedVariables)

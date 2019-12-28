@@ -1,8 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <QPropertyTree/ContextList.h>
+#include <QPropertyTreeLegacy/ContextList.h>
 #include <CrySchematyc/Env/IEnvRegistry.h>
 #include <CrySchematyc/Services/ISettingsManager.h>
 #include <CrySchematyc/Utils/Signal.h>

@@ -1,8 +1,8 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Tile.h"
-#include <CryCore/TypeInfo_impl.h>
+#include "MNM_Type_info.h"
 #include "DebugDrawContext.h"
 
 STRUCT_INFO_BEGIN(MNM::Tile::STriangle)
@@ -42,9 +42,6 @@ STile::STile()
 	, nodeCount(0)
 	, linkCount(0)
 	, hashValue(0)
-#if MNM_USE_EXPORT_INFORMATION
-	, connectivity()
-#endif
 {
 }
 
@@ -119,10 +116,6 @@ void CopyTileData(const TData* pNewData, const TCount newCount, TData*& pOutData
 
 void STile::CopyTriangles(const Tile::STriangle* _triangles, uint16 count)
 {
-#if MNM_USE_EXPORT_INFORMATION
-	InitConnectivity(triangleCount, count);
-#endif
-
 	CopyTileData(_triangles, count, triangles, triangleCount);
 }
 
@@ -155,13 +148,12 @@ void STile::AddOffMeshLink(const TriangleID triangleID, const uint16 offMeshInde
 		//Off-mesh link is always the first if exists
 		Tile::STriangle& triangle = triangles[triangleIdx];
 
-		const size_t MaxLinkCount = 1024 * 6;
-		Tile::SLink tempLinks[MaxLinkCount];
+		Tile::SLink tempLinks[MNM::Constants::TileLinksMaxCount];
 
 		bool hasOffMeshLink = links && (triangle.linkCount > 0) && (triangle.firstLink < linkCount) && (links[triangle.firstLink].side == Tile::SLink::OffMesh);
 
 		// Try enabling DEBUG_MNM_DATA_CONSISTENCY_ENABLED if you get this
-		CRY_ASSERT_MESSAGE(!hasOffMeshLink, "Not adding offmesh link, already exists");
+		CRY_ASSERT(!hasOffMeshLink, "Not adding offmesh link, already exists");
 
 		if (!hasOffMeshLink)
 		{
@@ -243,14 +235,13 @@ void STile::RemoveOffMeshLink(const TriangleID triangleID)
 	}
 
 	// Try enabling DEBUG_MNM_DATA_CONSISTENCY_ENABLED if you get this
-	CRY_ASSERT_MESSAGE(linkToRemoveIdx != 0xFFFF, "Trying to remove off mesh link that doesn't exist");
+	CRY_ASSERT(linkToRemoveIdx != 0xFFFF, "Trying to remove off mesh link that doesn't exist");
 
 	if (linkToRemoveIdx != 0xFFFF)
 	{
 		assert(linkCount > 1);
 
-		const size_t MaxLinkCount = 1024 * 6;
-		Tile::SLink tempLinks[MaxLinkCount];
+		Tile::SLink tempLinks[MNM::Constants::TileLinksMaxCount];
 
 		if (linkToRemoveIdx)
 			memcpy(tempLinks, links, sizeof(Tile::SLink) * linkToRemoveIdx);
@@ -281,11 +272,6 @@ void STile::Swap(STile& other)
 	std::swap(vertices, other.vertices);
 	std::swap(nodes, other.nodes);
 	std::swap(links, other.links);
-
-#if MNM_USE_EXPORT_INFORMATION
-	InitConnectivity(triangleCount, other.triangleCount);
-#endif
-
 	std::swap(triangleCount, other.triangleCount);
 	std::swap(vertexCount, other.vertexCount);
 	std::swap(nodeCount, other.nodeCount);
@@ -309,11 +295,6 @@ void STile::Destroy()
 	delete[] links;
 	links = 0;
 
-#if MNM_USE_EXPORT_INFORMATION
-	SAFE_DELETE_ARRAY(connectivity.trianglesAccessible);
-	connectivity.tileAccessible = 0;
-#endif
-
 	triangleCount = 0;
 	vertexCount = 0;
 	nodeCount = 0;
@@ -321,12 +302,12 @@ void STile::Destroy()
 	hashValue = 0;
 }
 
-ColorF CalculateColorForIsland(StaticIslandID islandID, uint16 totalIslands)
+ColorF CalculateColorFromMultipleItems(uint32 itemIdx, uint32 itemsCount)
 {
-	if (totalIslands == 0)
+	if (itemsCount == 0)
 		return Col_White;
 
-	const float hueValue = islandID / (float) totalIslands;
+	const float hueValue = itemIdx / (float)itemsCount;
 
 	ColorF color;
 	color.fromHSV(hueValue, 1.0f, 1.0f);
@@ -334,7 +315,7 @@ ColorF CalculateColorForIsland(StaticIslandID islandID, uint16 totalIslands)
 	return color;
 }
 
-void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::vector<float>& islandAreas) const
+void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::vector<float>& islandAreas, const ITriangleColorSelector& colorSelector) const
 {
 	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
@@ -342,7 +323,6 @@ void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::v
 	const size_t expectedMaxOffmeshTriCount = 8;
 
 	const ColorB triangleColorConnected(Col_Azure, 0.65f);
-	const ColorB triangleColorExternalMesh(Col_LimeGreen, 0.5f);
 	const ColorB triangleColorBackface(Col_Gray, 0.65f);
 	const ColorB triangleColorDisconnected(Col_Red, 0.65f);
 	const ColorB boundaryColor(Col_Black);
@@ -380,23 +360,15 @@ void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::v
 			const Tile::STriangle& triangle = triangles[i];
 			
 			// Getting triangle color
-#if MNM_USE_EXPORT_INFORMATION
-			ColorB triangleColor = ((drawFlags & DrawAccessibility) && (connectivity.trianglesAccessible != NULL) && !connectivity.trianglesAccessible[i]) ? triangleColorDisconnected : triangleColorConnected;
-#else
 			ColorB triangleColor = triangleColorConnected;
-#endif
 
-			if (!(drawFlags & DrawAccessibility))
-			{
-				// #MNM_TODO pavloi 2016.07.21: implement flag to color table lookup, which can be set from outside of the system.
-				if (triangle.triangleFlags & Tile::STriangle::eFlags_ExternalMesh)
-				{
-					triangleColor = triangleColorExternalMesh;
-				}
-			}
 			if (drawFlags & DrawIslandsId)
 			{
-				triangleColor = CalculateColorForIsland(triangle.islandID, static_cast<uint16>(islandAreas.size()));
+				triangleColor = CalculateColorFromMultipleItems(triangle.islandID, static_cast<uint32>(islandAreas.size()));
+			}
+			else
+			{
+				triangleColor = colorSelector.GetAnnotationColor(triangle.areaAnnotation);
 			}
 
 			if (triangleColor != currentColor)
@@ -497,17 +469,6 @@ void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::v
 			for (size_t l = 0; l < triangle.linkCount; ++l)
 			{
 				const Tile::SLink& link = links[triangle.firstLink + l];
-				const size_t edge = link.edge;
-				linkedEdges |= static_cast<size_t>((size_t)1 << edge);
-
-				const uint16 vi0 = link.edge;
-				const uint16 vi1 = (link.edge + 1) % 3;
-
-				assert(vi0 < 3);
-				assert(vi1 < 3);
-
-				const Vec3 v0 = triVertices[vi0] + loffset;
-				const Vec3 v1 = triVertices[vi1] + loffset;
 
 				if (link.side == Tile::SLink::OffMesh)
 				{
@@ -525,23 +486,38 @@ void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::v
 						offmeshLinkLines.push_back(a);
 					}
 				}
-				else if (link.side != Tile::SLink::Internal)
-				{
-					if (drawFlags & DrawExternalLinks)
-					{
-						// TODO: compute clipped edge
-						externalLinkLines.push_back(v0);
-						externalLinkLines.push_back(v1);
-					}
-				}
 				else
 				{
-					if (drawFlags & DrawInternalLinks)
+					const size_t edge = link.edge;
+					linkedEdges |= static_cast<size_t>((size_t)1 << edge);
+					
+					const uint16 vi0 = link.edge;
+					const uint16 vi1 = (link.edge + 1) % 3;
+
+					assert(vi0 < 3);
+					assert(vi1 < 3);
+
+					const Vec3 v0 = triVertices[vi0] + loffset;
+					const Vec3 v1 = triVertices[vi1] + loffset;
+
+					if (link.side != Tile::SLink::Internal)
 					{
-						internalLinkLines.push_back(v0);
-						internalLinkLines.push_back(v1);
+						if (drawFlags & DrawExternalLinks)
+						{
+							// TODO: compute clipped edge
+							externalLinkLines.push_back(v0);
+							externalLinkLines.push_back(v1);
+						}
 					}
-				}
+					else
+					{
+						if (drawFlags & DrawInternalLinks)
+						{
+							internalLinkLines.push_back(v0);
+							internalLinkLines.push_back(v1);
+						}
+					}
+				}				
 			}
 
 			if (drawFlags & DrawMeshBoundaries)
@@ -585,9 +561,9 @@ void STile::ValidateTriangleLinks()
 	{
 		const Tile::STriangle& triangle = triangles[i];
 
-		CRY_ASSERT_MESSAGE(triangle.firstLink <= linkCount || linkCount == 0, "Out of range link");
+		CRY_ASSERT(triangle.firstLink <= linkCount || linkCount == 0, "Out of range link");
 
-		CRY_ASSERT_MESSAGE(nextLink == triangle.firstLink, "Links are not contiguous");
+		CRY_ASSERT(nextLink == triangle.firstLink, "Links are not contiguous");
 
 		nextLink += triangle.linkCount;
 
@@ -595,7 +571,7 @@ void STile::ValidateTriangleLinks()
 		{
 			uint16 linkIdx = triangle.firstLink + l;
 
-			CRY_ASSERT_MESSAGE(links[linkIdx].side != Tile::SLink::OffMesh || l == 0, "Off mesh links should always be first");
+			CRY_ASSERT(links[linkIdx].side != Tile::SLink::OffMesh || l == 0, "Off mesh links should always be first");
 		}
 	}
 
@@ -612,7 +588,7 @@ void STile::ValidateTriangles() const
 		{
 			if (tri.vertex[i] >= verticesMaxIndex)
 			{
-				CRY_ASSERT_MESSAGE(tri.vertex[i] < verticesMaxIndex, "MNM traingle invalid vertex index");
+				CRY_ASSERT(tri.vertex[i] < verticesMaxIndex, "MNM traingle invalid vertex index");
 			}
 		}
 	}
@@ -623,7 +599,11 @@ void STile::ValidateTriangles() const
 vector3_t::value_type STile::GetTriangleArea(const TriangleID triangleID) const
 {
 	const Tile::STriangle& triangle = triangles[ComputeTriangleIndex(triangleID)];
+	return GetTriangleArea(triangle);
+}
 
+vector3_t::value_type STile::GetTriangleArea(const Tile::STriangle& triangle) const
+{
 	const vector3_t v0 = vector3_t(vertices[triangle.vertex[0]]);
 	const vector3_t v1 = vector3_t(vertices[triangle.vertex[1]]);
 	const vector3_t v2 = vector3_t(vertices[triangle.vertex[2]]);
@@ -637,54 +617,4 @@ vector3_t::value_type STile::GetTriangleArea(const TriangleID triangleID) const
 	return sqrtf(s * (s - len0) * (s - len1) * (s - len2));
 }
 
-//////////////////////////////////////////////////////////////////////////
-
-#if MNM_USE_EXPORT_INFORMATION
-
-bool STile::ConsiderExportInformation() const
-{
-	// TODO FrancescoR: Remove if it's not necessary anymore or refactor it.
-	return true;
-}
-
-void STile::InitConnectivity(uint16 oldTriangleCount, uint16 newTriangleCount)
-{
-	if (ConsiderExportInformation())
-	{
-		// By default all is accessible
-		connectivity.tileAccessible = 1;
-		if (oldTriangleCount != newTriangleCount)
-		{
-			SAFE_DELETE_ARRAY(connectivity.trianglesAccessible);
-
-			if (newTriangleCount)
-			{
-				connectivity.trianglesAccessible = new uint8[newTriangleCount];
-			}
-		}
-
-		if (newTriangleCount)
-		{
-			memset(connectivity.trianglesAccessible, 1, sizeof(uint8) * newTriangleCount);
-		}
-		connectivity.triangleCount = newTriangleCount;
-	}
-}
-
-void STile::ResetConnectivity(uint8 accessible)
-{
-	if (ConsiderExportInformation())
-	{
-		assert(connectivity.triangleCount == triangleCount);
-
-		connectivity.tileAccessible = accessible;
-
-		if (connectivity.trianglesAccessible != NULL)
-		{
-			memset(connectivity.trianglesAccessible, accessible, sizeof(uint8) * connectivity.triangleCount);
-		}
-	}
-}
-
-#endif
 }

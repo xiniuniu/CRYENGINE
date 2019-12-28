@@ -1,20 +1,20 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 #include "PresetCreator.h"
 
-#include <QDialogButtonBox>
-#include <QVBoxLayout>
-#include <QString>
-
-#include "FileDialogs/FileNameLineEdit.h"
-#include "FilePathUtil.h"
-#include "AssetSystem/Asset.h"
-#include "AssetSystem/AssetManager.h"
-#include "AssetSystem/Browser/AssetFoldersView.h"
-#include "OutputsWidget.h"
-#include "QAdvancedTreeView.h"
-#include "Controls/QuestionDialog.h"
 #include "OutputEditorDialog.h"
 #include "EditorSubstanceManager.h"
+
+#include <AssetSystem/Asset.h>
+#include <AssetSystem/AssetManager.h>
+#include <AssetSystem/Browser/AssetFoldersView.h>
+#include <Controls/QuestionDialog.h>
+#include <FileDialogs/FileNameLineEdit.h>
+#include <OutputsWidget.h>
+#include <PathUtils.h>
+#include <QAdvancedTreeView.h>
+#include <QBoxLayout>
 
 namespace EditorSubstance
 {
@@ -32,11 +32,8 @@ namespace EditorSubstance
 		m_pButtons->setStandardButtons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
 		connect(m_pButtons, &QDialogButtonBox::accepted, this, &CPressetCreator::OnAccept);
 		connect(m_pButtons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-		m_pModalGuard = new QFrame();
-		m_pModalGuard->resize(size());
-		m_pModalGuard->hide();
 		m_foldersView = new CAssetFoldersView(this);
-		m_foldersView->SelectFolder(asset->GetFolder());
+		m_foldersView->SelectFolder(asset->GetFolder().c_str());
 		m_foldersView->setSelectionMode(QAbstractItemView::SingleSelection);
 		m_pPathEdit = new CFileNameLineEdit(this);
 		m_pPathEdit->setText(QString(PathUtil::GetUniqueName(string(asset->GetName()) + "." + CAssetManager::GetInstance()->FindAssetType("SubstanceInstance")->GetFileExtension(), asset->GetFolder()).c_str()));
@@ -62,7 +59,22 @@ namespace EditorSubstance
 			m_resolution = res;
 		});
 		
+		CAssetManager* pAssetManager = GetIEditor()->GetAssetManager();
+		pAssetManager->signalBeforeAssetsRemoved.Connect([this, asset](const std::vector<CAsset*>& assets)
+		{
+			if (std::find(assets.begin(), assets.end(), asset) != assets.end())
+			{
+				m_substanceArchive.clear();
+				m_pOutputsWidget->setDisabled(true);
+			}
+		}, (uintptr_t)this);
 	}
+
+	CPressetCreator::~CPressetCreator()
+	{
+		GetIEditor()->GetAssetManager()->signalBeforeAssetsRemoved.DisconnectById((uintptr_t)this);
+	}
+
 	const string& CPressetCreator::GetTargetFileName() const
 	{
 		return m_finalFileName;
@@ -100,6 +112,11 @@ namespace EditorSubstance
 
 	void CPressetCreator::OnEditOutputs()
 	{
+		if (m_substanceArchive.empty())
+		{
+			return;
+		}
+
 		if (m_pOutputsGraphEditor)
 		{
 			m_pOutputsGraphEditor->raise();
@@ -115,9 +132,6 @@ namespace EditorSubstance
 		m_pOutputsWidget->setDisabled(true);
 		m_pButtons->setDisabled(true);
 		m_pOutputsGraphEditor->Popup();
-		m_pModalGuard->show();
-		m_pModalGuard->installEventFilter(this);
-
 	}
 
 	void CPressetCreator::OnOutputEditorAccepted()
@@ -134,8 +148,6 @@ namespace EditorSubstance
 		m_pButtons->setDisabled(false);
 		m_pOutputsGraphEditor->deleteLater();
 		m_pOutputsGraphEditor = nullptr;
-		m_pModalGuard->removeEventFilter(this);
-		m_pModalGuard->hide();
 	}
 
 	void CPressetCreator::keyPressEvent(QKeyEvent *e)
@@ -167,22 +179,6 @@ namespace EditorSubstance
 			else {
 				QApplication::sendEvent(parent(), e);
 			}
-	}
-
-	bool CPressetCreator::eventFilter(QObject *obj, QEvent *event)
-	{
-		if (m_pOutputsGraphEditor)
-		{
-			OnEditOutputs();
-			event->accept();
-			return true;
-		}
-		return CEditorDialog::eventFilter(obj, event);
-	}
-
-	void CPressetCreator::resizeEvent(QResizeEvent *e)
-	{
-		m_pModalGuard->resize(e->size());
 	}
 
 	bool CPressetCreator::event(QEvent *e)

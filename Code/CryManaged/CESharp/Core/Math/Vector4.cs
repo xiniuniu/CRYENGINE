@@ -1,16 +1,22 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using CryEngine.Common;
 
 namespace CryEngine
 {
+	[StructLayout(LayoutKind.Sequential)]
 	public struct Vector4 : IEquatable<Vector4>
 	{
+		[MarshalAs(UnmanagedType.R4)]
 		private float _x;
+		[MarshalAs(UnmanagedType.R4)]
 		private float _y;
+		[MarshalAs(UnmanagedType.R4)]
 		private float _z;
+		[MarshalAs(UnmanagedType.R4)]
 		private float _w;
 
 		public float x { get { return _x; } set { _x = value; } }
@@ -30,6 +36,9 @@ namespace CryEngine
 			_z = zCoord;
 			_w = wCoord;
 		}
+
+		public Vector4(Vector2 v, float z, float w) : this(v.x, v.y, z, w) { }
+		public Vector4(Vector3 v, float w) : this(v.x, v.y, v.z, w) { }
 
 		#region Overrides
 		public override int GetHashCode()

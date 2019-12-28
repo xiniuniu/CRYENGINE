@@ -1,11 +1,9 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ShaderResources.h"
 #include "GraphicsPipeline/Common/GraphicsPipelineStateSet.h"
 #include "Common/Textures/TextureHelpers.h"
-
-#include "DriverD3D.h"
 
 //===============================================================================
 
@@ -81,14 +79,15 @@ size_t CShaderResources::GetResourceMemoryUsage(ICrySizer* pSizer)
 	//DynArray<Vec4> m_Constants[3];
 }
 
-void CShaderResources::Release()
+void CShaderResources::Release() const
 {
 	if (CryInterlockedDecrement(&m_nRefCounter) <= 0) // is checked inside render thread
 	{
 		if (gRenDev && gRenDev->m_pRT)
 		{
 			// Do delete itself inside render thread
-			gRenDev->m_pRT->RC_ReleaseShaderResource(this);
+			gRenDev->ExecuteRenderThreadCommand( [=]{ const_cast<CShaderResources*>(this)->RT_Release(); },
+				ERenderCommandFlags::RenderLoadingThread_defer | ERenderCommandFlags::LevelLoadingThread_defer );
 		}
 		else
 		{
@@ -116,14 +115,6 @@ void CShaderResources::Cleanup()
 	}
 	SAFE_DELETE(m_pDeformInfo);
 	SAFE_DELETE(m_pDetailDecalInfo);
-	if (m_pSky)
-	{
-		for (size_t i = 0; i < sizeof(m_pSky->m_SkyBox) / sizeof(m_pSky->m_SkyBox[0]); ++i)
-		{
-			SAFE_RELEASE(m_pSky->m_SkyBox[i]);
-		}
-		SAFE_DELETE(m_pSky);
-	}
 	ReleaseConstants();
 
 	// not thread safe main thread can potentially access this destroyed entry in mfCreateShaderResources()
@@ -145,11 +136,6 @@ void CShaderResources::ClearPipelineStateCache()
 CShaderResources::~CShaderResources()
 {
 	Cleanup();
-
-	if (gRenDev->m_RP.m_pShaderResources == this)
-	{
-		gRenDev->m_RP.m_pShaderResources = NULL;
-	}
 }
 
 CShaderResources::CShaderResources()
@@ -436,8 +422,16 @@ void CShaderResources::SetInvalid()
 
 void CShaderResources::UpdateConstants(IShader* pISH)
 {
-	if (gRenDev && gRenDev->m_pRT)
-		gRenDev->m_pRT->RC_UpdateMaterialConstants(this, pISH);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CShaderResources::UpdateConstants");
+
+	_smart_ptr<CShaderResources> pSelf(this);
+	_smart_ptr<IShader> pShader = pISH;
+
+	ERenderCommandFlags flags = ERenderCommandFlags::LevelLoadingThread_defer;
+	if (gcpRendD3D->m_pRT->m_eVideoThreadMode != SRenderThread::eVTM_Disabled) 
+		flags |= ERenderCommandFlags::MainThread_defer;
+
+	gRenDev->ExecuteRenderThreadCommand( [=]{ pSelf->RT_UpdateConstants(pShader);}, flags);
 }
 
 static char* sSetParameterExp(const char* szExpr, Vec4& vVal, DynArray<SShaderParam>& Params, bool& bResult);
@@ -472,7 +466,7 @@ static char* sSetParameterExp(const char* szExpr, Vec4& vVal, DynArray<SShaderPa
 	int n = 0;
 	int nc = 0;
 	char theChar;
-	while (theChar = *szExpr)
+	while ((theChar = *szExpr))
 	{
 		if (theChar == '(')
 		{
@@ -605,10 +599,13 @@ inline void AddShaderParamToArray(SShaderFXParams& FXParams, FixedDynArray<SFXPa
 
 void CShaderResources::RT_UpdateConstants(IShader* pISH)
 {
+	CRY_PROFILE_SECTION(PROFILE_RENDERER, "CShaderResources::RT_UpdateConstants");
 	//assert(gRenDev->m_pRT->IsRenderThread());
 
 	CShader* pSH = (CShader*)pISH;
 	assert(pSH->m_Flags & EF_LOADED); // Make sure shader is parsed
+
+	uint32 nMDMask = 0;
 
 	// Update common PM parameters
 	{
@@ -617,7 +614,7 @@ void CShaderResources::RT_UpdateConstants(IShader* pISH)
 
 		if (pTex && pTex->m_Ext.m_pTexModifier)
 		{
-			pTex->Update(EFTT_DIFFUSE);
+			pTex->Update(EFTT_DIFFUSE, nMDMask);
 			matrixTCM = pTex->m_Ext.m_pTexModifier->m_TexMatrix;
 		}
 
@@ -625,7 +622,7 @@ void CShaderResources::RT_UpdateConstants(IShader* pISH)
 		pTex = m_Textures[EFTT_DETAIL_OVERLAY];
 		if (pTex && pTex->m_Ext.m_pTexModifier)
 		{
-			pTex->Update(EFTT_DETAIL_OVERLAY);
+			pTex->Update(EFTT_DETAIL_OVERLAY, nMDMask);
 			detailTilingAndAlpharef.x = pTex->m_Ext.m_pTexModifier->m_Tiling[0];
 			detailTilingAndAlpharef.y = pTex->m_Ext.m_pTexModifier->m_Tiling[1];
 		}
@@ -774,36 +771,21 @@ void CShaderResources::RT_UpdateConstants(IShader* pISH)
 		}
 	}
 
-	// prevent the heap from re-allocating the CConstantBuffer immediately at the same address
-	CConstantBuffer* pOldCB = m_pCB;
-	CConstantBuffer* pNewCB = nullptr;
+	CConstantBufferPtr temp;
+	temp.swap(m_pConstantBuffer);
 
 	if (m_Constants.size())
 	{
 		// NOTE: The pointers and the size is 16 byte aligned
 		size_t nSize = m_Constants.size() * sizeof(Vec4);
 
-		pNewCB = gcpRendD3D->m_DevBufMan.CreateConstantBufferRaw(nSize, false);
-		pNewCB->UpdateBuffer(&m_Constants[0], Align(nSize, 256));
-
-#if !defined(_RELEASE) && (CRY_PLATFORM_WINDOWS || CRY_PLATFORM_ORBIS) && !CRY_RENDERER_GNM
-		if (pNewCB)
+		if ((m_pConstantBuffer = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(nSize, false)))
 		{
-			string name = string("PM CBuffer ") + pSH->GetName() + "@" + m_szMaterialName;
-
-			#if CRY_RENDERER_VULKAN || CRY_PLATFORM_ORBIS
-				pNewCB->GetD3D()->DebugSetName(name.c_str());
-			#else
-				pNewCB->GetD3D()->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)name.length(), name.c_str());
-			#endif
+			m_pConstantBuffer->UpdateBuffer(&m_Constants[0], Align(nSize, 256));
+			m_pConstantBuffer->SetDebugName(string("Generic Per-Material CB ") + pSH->GetName() + "@" + m_szMaterialName);
 		}
-#endif
 	}
 
-	CRY_ASSERT((!pNewCB && !pOldCB) || (pNewCB != pOldCB));
-	CHWShader_D3D::mfUnbindCB(pOldCB);
-	SAFE_RELEASE(pOldCB);
-	m_pCB = pNewCB;
 
 	RT_UpdateResourceSet();
 }
@@ -825,16 +807,19 @@ void CShaderResources::RT_UpdateResourceSet()
 	flags &= ~(EFlags_AnimatedSequence | EFlags_DynamicUpdates);
 
 	// TODO: default material created first doesn't have a constant buffer
-	if (!m_pCB)
+	if (!m_pConstantBuffer)
 		return;
 
 	// per material constant buffer
-	m_resources.SetConstantBuffer(eConstantBufferShaderSlot_PerMaterial, m_pCB, EShaderStage_AllWithoutCompute);
+	m_resources.SetConstantBuffer(eConstantBufferShaderSlot_PerMaterial, m_pConstantBuffer, EShaderStage_AllWithoutCompute);
 
 	// material textures
 	bool bContainsInvalidTexture = false;
 	for (EEfResTextures texType = EFTT_DIFFUSE; texType < EFTT_MAX; texType = EEfResTextures(texType + 1))
 	{
+		if (!TextureHelpers::IsSlotAvailable(texType))
+			continue;
+
 		ResourceViewHandle hView = EDefaultResourceViews::Default;
 		CTexture* pTex = nullptr;
 
@@ -873,11 +858,11 @@ void CShaderResources::RT_UpdateResourceSet()
 		}
 
 		bContainsInvalidTexture |= !CTexture::IsTextureExist(pTex);
-		m_resources.SetTexture(IShader::GetTextureSlot(texType), pTex, hView, EShaderStage_AllWithoutCompute);
+		m_resources.SetTexture(IShader::GetTextureSlot(texType), pTex, hView, TextureHelpers::GetShaderStagesForTexSlot(texType));
 	}
 
 	// TODO: default material created first doesn't have a constant buffer
-	if (m_pCB && !bContainsInvalidTexture)
+	if (m_pConstantBuffer && !bContainsInvalidTexture)
 	{
 		m_pCompiledResourceSet->Update(m_resources);
 	}
@@ -894,8 +879,7 @@ void CShaderResources::CloneConstants(const IRenderShaderResources* pISrc)
 	if (!pSrc)
 	{
 		m_Constants.clear();
-		CHWShader_D3D::mfUnbindCB(m_pCB);
-		SAFE_RELEASE(m_pCB);
+		m_pConstantBuffer.reset();
 		return;
 	}
 	else
@@ -903,18 +887,7 @@ void CShaderResources::CloneConstants(const IRenderShaderResources* pISrc)
 		m_HeatAmount = pSrc->m_HeatAmount;
 		m_Constants = pSrc->m_Constants;
 
-		{
-			CConstantBuffer*& pCB0Dst = m_pCB;
-			CConstantBuffer*& pCB0Src = pSrc->m_pCB;
-			if (pCB0Src)
-				pCB0Src->AddRef();
-			if (pCB0Dst)
-			{
-				CHWShader_D3D::mfUnbindCB(pCB0Dst);
-				pCB0Dst->Release();
-			}
-			pCB0Dst = pCB0Src;
-		}
+		m_pConstantBuffer = pSrc->m_pConstantBuffer;
 
 		m_pCompiledResourceSet = pSrc->m_pCompiledResourceSet;
 		m_flags |= eFlagRecreateResourceSet;
@@ -925,16 +898,8 @@ void CShaderResources::ReleaseConstants()
 {
 	m_Constants.clear();
 
-	if (m_pCB)
-	{
-		gRenDev->m_pRT->RC_ReleaseCB(m_pCB);
-		m_pCB = NULL;
-	}
-
-	if (m_pCompiledResourceSet)
-	{
-		gRenDev->m_pRT->RC_ReleaseRS(m_pCompiledResourceSet);
-	}
+	m_pConstantBuffer.reset();
+	m_pCompiledResourceSet.reset();
 }
 
 static void sChangeAniso(SEfResTexture* pTex)

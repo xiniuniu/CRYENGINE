@@ -1,19 +1,21 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "SubstanceArchiveImporter.h"
-#include <AssetSystem/AssetImportContext.h>
-#include <AssetSystem/AssetManager.h>
-#include <AssetSystem/Loader/AssetLoaderHelpers.h>
-#include <AssetSystem/Asset.h>
-#include <AssetSystem/EditableAsset.h>
-#include "SandboxPlugin.h"
+
+#include "AssetTypes/SubstanceArchive.h"
 #include "EditorSubstanceManager.h"
 #include "ISubstanceManager.h"
-#include "AssetTypes/SubstanceArchive.h"
+#include "SandboxPlugin.h"
 
-#include <FilePathUtil.h>
-#include "Util/FileUtil.h"
+#include <AssetSystem/Asset.h>
+#include <AssetSystem/AssetImportContext.h>
+#include <AssetSystem/AssetManager.h>
+#include <AssetSystem/EditableAsset.h>
+#include <AssetSystem/Loader/AssetLoaderHelpers.h>
+#include <PathUtils.h>
+
+#include <Util/FileUtil.h>
 
 
 namespace EditorSubstance
@@ -62,7 +64,7 @@ namespace EditorSubstance
 			}
 			CEditableAsset editAsset = ctx.CreateEditableAsset(*currentAsset);
 			editAsset.SetMetadataFile(relativeFileName + ".cryasset");
-			editAsset.SetFiles("", { relativeFileName });
+			editAsset.SetFiles({ relativeFileName });
 
 			//////////////////////////////////////////////////////////////////////////
 			// gather the information about substance graph
@@ -75,12 +77,13 @@ namespace EditorSubstance
 			// after imported, lest try regenerate everything dependant
 			if (checkDepenencies)
 			{
-				for (CAsset* depAsset : CAssetManager::GetInstance()->GetReverseDependencies(*currentAsset))
+				for (auto& item : CAssetManager::GetInstance()->GetReverseDependencies(*currentAsset))
 				{
-					string dependantAssetTypeName(depAsset->GetType()->GetTypeName());
+					CAsset* pDepAsset = item.first;
+					string dependantAssetTypeName(pDepAsset->GetType()->GetTypeName());
 					if (dependantAssetTypeName == "SubstanceInstance")
 					{
-						EditorSubstance::CManager::Instance()->ForcePresetRegeneration(depAsset);
+						EditorSubstance::CManager::Instance()->ForcePresetRegeneration(pDepAsset);
 					}
 				}
 			}

@@ -1,10 +1,8 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef __CREPARTICLE_H__
-#define __CREPARTICLE_H__
-
-#include <CryThreading/IJobManager.h>
+#pragma once
 #include <CryMemory/MemoryAccess.h>
+#include "RendElement.h"
 
 // forward declarations
 class CREParticle;
@@ -15,6 +13,17 @@ namespace gpu_pfx2
 	class CParticleComponentRuntime;
 }
 class CDeviceGraphicsCommandInterface;
+
+struct CRY_ALIGN(16) SAddParticlesToSceneJob
+{
+	void GetMemoryUsage(ICrySizer* pSizer) const {}
+
+	SShaderItem* pShaderItem;
+	CRenderObject* pRenderObject;
+	IParticleVertexCreator* pVertexCreator = nullptr;
+	gpu_pfx2::IParticleComponentRuntime* pGpuRuntime = nullptr;
+	const CCamera* pCamera = nullptr;
+};
 
 struct SParticleAxes
 {
@@ -44,15 +53,19 @@ struct SRenderVertices
 struct SCameraInfo
 {
 	const CCamera* pCamera;
+	const CCamera* pMainCamera;
 	IVisArea*      pCameraVisArea;
 	bool           bCameraUnderwater;
 	bool           bRecursivePass;
+	bool           bShadowPass;
 
 	SCameraInfo(const SRenderingPassInfo& passInfo) :
 		pCamera(&passInfo.GetCamera()),
+		pMainCamera(&passInfo.GetCamera()),
 		pCameraVisArea(gEnv->p3DEngine->GetVisAreaFromPos(passInfo.GetCamera().GetOccPos())),
 		bCameraUnderwater(passInfo.IsCameraUnderWater()),
-		bRecursivePass(passInfo.IsRecursivePass())
+		bRecursivePass(passInfo.IsRecursivePass()),
+		bShadowPass(passInfo.IsShadowPass())
 	{}
 };
 
@@ -73,13 +86,6 @@ class CREParticle : public CRenderElement
 {
 public:
 	static const uint numBuffers = 3;
-
-	enum EParticleObjFlags
-	{
-		ePOF_HALF_RES              = BIT(0),
-		ePOF_VOLUME_FOG            = BIT(1),
-		ePOF_USE_VERTEX_PULL_MODEL = BIT(2),
-	};
 
 public:
 	CREParticle();
@@ -108,8 +114,8 @@ public:
 		return sizeof(*this);
 	}
 
-	virtual bool Compile(CRenderObject* pRenderObject) override;
-	virtual void DrawToCommandList(CRenderObject* pRenderObject, const struct SGraphicsPipelinePassContext& context) override;
+	virtual bool Compile(CRenderObject* pObj, uint64 objFlags, ERenderElementFlags elmFlags, const AABB &localAABB, CRenderView *pRenderView, bool updateInstanceDataOnly) override;
+	virtual void DrawToCommandList(CRenderObject* pRenderObject, const struct SGraphicsPipelinePassContext& context, CDeviceCommandList* commandList) override;
 
 	// Additional methods.
 
@@ -119,15 +125,15 @@ public:
 
 	void                     ComputeVertices(SCameraInfo camInfo, uint64 uRenderFlags);
 
-	bool                     AddedToView() const { return m_addedToView != 0; }
-	void                     SetAddedToView() { m_addedToView = 1; }
+	void                     mfGetBBox(AABB& bb) const override { bb = m_bbWorld; }
+	void                     SetBBox(const AABB& bb) { m_bbWorld = bb; }
 
 private:
 	CDeviceGraphicsPSOPtr GetGraphicsPSO(CRenderObject* pRenderObject, const struct SGraphicsPipelinePassContext& context) const;
-	void                  PrepareDataToRender(CRenderObject* pRenderObject);
+	void                  PrepareDataToRender(CRenderView *pRenderView,CRenderObject* pRenderObject);
 	void                  BindPipeline(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface, CDeviceGraphicsPSOPtr pGraphicsPSO);
-	void                  DrawParticles(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface);
-	void                  DrawParticlesLegacy(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface);
+	void                  DrawParticles(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface, int frameId);
+	void                  DrawParticlesLegacy(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface, int frameId);
 
 	TCompiledParticlePtr                 m_pCompiledParticle;
 	IParticleVertexCreator*              m_pVertexCreator;
@@ -137,7 +143,6 @@ private:
 	uint32                               m_nFirstIndex;
 	uint32                               m_allocId;
 	uint16                               m_nThreadId;
-	uint8                                m_addedToView;
+	bool                                 m_bCompiled;
+	AABB                                 m_bbWorld;
 };
-
-#endif  // __CREPARTICLE_H__

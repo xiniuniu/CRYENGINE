@@ -1,12 +1,12 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 #include "StdAfx.h"
 #include "GlobalImportSettings.h"
 
 #include <Cry3DEngine/I3DEngine.h>
 #include <IEditor.h>
 #include <IResourceSelectorHost.h>
-#include <Material\Material.h>
-#include <Material\MaterialManager.h>
+#include <Material/Material.h>
+#include <Material/MaterialManager.h>
 
 #include <CrySerialization/yasli/Archive.h>
 #include <CrySerialization/yasli/Enum.h>

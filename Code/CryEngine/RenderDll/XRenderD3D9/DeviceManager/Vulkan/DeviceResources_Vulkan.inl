@@ -1,6 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
-
-#include "DriverD3D.h"
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 static uint32 MapResourceFlags(NCryVulkan::CMemoryResource* pResource)
 {
@@ -49,10 +47,10 @@ static uint32 MapResourceFlags(NCryVulkan::CMemoryResource* pResource)
 CDeviceResourceView* CDeviceResource::CreateResourceView(const SResourceView pView)
 {
 	NCryVulkan::CMemoryResource* const pResource = GetNativeResource();
-	VK_ASSERT(pResource && "Attempt to create view on nullptr");
+	VK_ASSERT(pResource, "Attempt to create view on nullptr");
 	NCryVulkan::CImageResource* const pImage = pResource->AsImage();
 	NCryVulkan::CBufferResource* const pBuffer = pResource->AsBuffer();
-	VK_ASSERT((m_bFilterable ? pImage != nullptr : pBuffer != nullptr) && "Filterable property requires an image resource");
+	VK_ASSERT((m_bFilterable ? pImage != nullptr : pBuffer != nullptr), "Filterable property requires an image resource");
 
 	DXGI_FORMAT dxgiFormat = DXGI_FORMAT(pView.m_Desc.nFormat);
 	if (pView.m_Desc.bSrgbRead && DeviceFormats::IsSRGBReadable(dxgiFormat))
@@ -67,8 +65,7 @@ CDeviceResourceView* CDeviceResource::CreateResourceView(const SResourceView pVi
 		const SResourceView oneView(~0ULL);
 		const bool bAllMips = pView.m_Desc.nMipCount == zeroView.m_Desc.nMipCount || pView.m_Desc.nMipCount == oneView.m_Desc.nMipCount;
 		const bool bAllSlices = pView.m_Desc.nSliceCount == zeroView.m_Desc.nSliceCount || pView.m_Desc.nSliceCount == oneView.m_Desc.nSliceCount;
-		const bool bMultiSampled = pView.m_Desc.bMultisample != 0;
-		VK_ASSERT(bMultiSampled == pResource->GetFlag(NCryVulkan::kImageFlagMultiSampled) && "Cannot create non-multi-sampled view on a multi-sampled resource");
+		VK_ASSERT((pView.m_Desc.bMultisample != 0) == pResource->GetFlag(NCryVulkan::kImageFlagMultiSampled), "Cannot create non-multi-sampled view on a multi-sampled resource");
 
 		uint32_t firstMip = pView.m_Desc.nMostDetailedMip;
 		uint32_t numMips = bAllMips ? pImage->GetMipCount() - firstMip : static_cast<uint32_t>(pView.m_Desc.nMipCount);
@@ -167,7 +164,7 @@ CDeviceResourceView* CDeviceResource::CreateResourceView(const SResourceView pVi
 		}
 		else
 		{
-			VK_ASSERT(size != 0 && "Cannot create 0-byte view on non-null-buffer");
+			VK_ASSERT(size != 0, "Cannot create 0-byte view on non-null-buffer");
 			offset *= pBuffer->GetStride();
 			size *= pBuffer->GetStride();
 		}
@@ -184,7 +181,7 @@ CDeviceResourceView* CDeviceResource::CreateResourceView(const SResourceView pVi
 	}
 	else
 	{
-		VK_ASSERT("Unsupported resource type for view creation");
+		VK_ASSERT(false, "Unsupported resource type for view creation");
 	}
 	return nullptr;
 }
@@ -210,27 +207,35 @@ CDeviceResource::ESubstitutionResult CDeviceResource::SubstituteUsedResource()
 {
 	NCryVulkan::CMemoryResource* pResource = GetNativeResource();
 	const auto& fenceManager = pResource->GetDevice()->GetScheduler().GetFenceManager();
-	NCryVulkan::CImageResource* pImage = pResource->AsImage();
-	NCryVulkan::CBufferResource* pBuffer = pResource->AsBuffer();
+	NCryVulkan::CDynamicOffsetBufferResource* pDynBuf = pResource->AsDynamicOffsetBuffer();
+	NCryVulkan::CBufferResource             * pBuffer = pResource->AsBuffer();
+	NCryVulkan::CImageResource              * pImage  = pResource->AsImage();
 	VkResult hVkResult = VK_SUCCESS;
 
-	if (pImage)
-		hVkResult = pImage->GetDevice()->SubstituteUsedCommittedResource(fenceManager.GetCurrentValues(), &pImage);
-	if (pBuffer)
+	// NOTE: Poor man's resource tracking (take current time as last-used moment)
+	if (pDynBuf)
+		hVkResult = pDynBuf->GetDevice()->SubstituteUsedCommittedResource(fenceManager.GetCurrentValues(), &pDynBuf);
+	else if (pBuffer)
 		hVkResult = pBuffer->GetDevice()->SubstituteUsedCommittedResource(fenceManager.GetCurrentValues(), &pBuffer);
+	else if (pImage)
+		hVkResult = pImage ->GetDevice()->SubstituteUsedCommittedResource(fenceManager.GetCurrentValues(), &pImage);
 
 	if (hVkResult == VK_NOT_READY) // NOT_SUBSTITUTED
 		return eSubResult_Kept;
 	if (hVkResult != VK_SUCCESS) // Other Error
 		return eSubResult_Failed;
 
-	if (pImage)
+	if (pDynBuf)
+		m_pNativeResource = pDynBuf;
+	else if (pBuffer)
+		m_pNativeResource = pBuffer;
+	else if (pImage)
 		m_pNativeResource = pImage;
-	if (pBuffer)
+
+	if (pDynBuf || pBuffer)
 	{
 		auto* const pPreviousBuffer = static_cast<NCryVulkan::CBufferResource*>(pResource);
 		pBuffer->SetStrideAndElementCount(pPreviousBuffer->GetStride(), pPreviousBuffer->GetElementCount());
-		m_pNativeResource = pBuffer;
 	}
 
 	ReleaseResourceViews();
@@ -247,7 +252,7 @@ CDeviceResource::ESubstitutionResult CDeviceResource::SubstituteUsedResource()
 SBufferLayout CDeviceBuffer::GetLayout() const
 {
 	NCryVulkan::CBufferResource* const pBuffer = m_pNativeResource->AsBuffer();
-	VK_ASSERT(pBuffer && "Invalid cast to buffer");
+	VK_ASSERT(pBuffer, "Invalid cast to buffer");
 
 	SBufferLayout result;
 	result.m_eFormat = DXGI_FORMAT_UNKNOWN; // Vk buffers are not typed, that's a property of the view.
@@ -287,30 +292,36 @@ SResourceDimension CDeviceBuffer::GetDimension() const
 
 STextureLayout CDeviceTexture::GetLayout() const
 {
-	STextureLayout result;
-	result.m_eDstFormat = result.m_eSrcFormat = gcpRendD3D->m_hwTexFormatSupport.GetClosestFormatSupported(DeviceFormats::ConvertToTexFormat(m_eNativeFormat), result.m_pPixelFormat);
-	result.m_eTT = m_eTT;
-	result.m_eFlags = m_eFlags;
-	result.m_bIsSRGB = m_bIsSrgb;
+	STextureLayout Layout;
+
+	Layout.m_eSrcFormat =
+	Layout.m_eDstFormat = CRendererResources::s_hwTexFormatSupport.GetClosestFormatSupported(DeviceFormats::ConvertToTexFormat(m_eNativeFormat), Layout.m_pPixelFormat);
+	Layout.m_eTT = m_eTT;
+	Layout.m_eFlags = m_eFlags;
+	Layout.m_bIsSRGB = m_bIsSrgb;
 
 	NCryVulkan::CImageResource* const pImage = m_pNativeResource ? m_pNativeResource->AsImage() : nullptr;
+
 	if (pImage)
 	{
-		result.m_nWidth = static_cast<uint16>(pImage->GetWidth());
-		result.m_nHeight = static_cast<uint16>(pImage->GetHeight());
-		result.m_nDepth = static_cast<uint16>(pImage->GetDepth());
-		result.m_nArraySize = static_cast<uint8>(pImage->GetSliceCount());
-		result.m_nMips = static_cast<int8>(pImage->GetMipCount());
-		result.m_eFlags |= MapResourceFlags(pImage);
+		Layout.m_nWidth = static_cast<uint16>(pImage->GetWidth());
+		Layout.m_nHeight = static_cast<uint16>(pImage->GetHeight());
+		Layout.m_nDepth = static_cast<uint16>(pImage->GetDepth());
+		Layout.m_nArraySize = static_cast<uint8>(pImage->GetSliceCount());
+		Layout.m_nMips = static_cast<int8>(pImage->GetMipCount());
+		Layout.m_eFlags |= MapResourceFlags(pImage);
 	}
-	return result;
+
+	return Layout;
 }
 
 STextureLayout CDeviceTexture::GetLayout(D3DBaseView* pView)
 {
 	STextureLayout Layout = {};
+
 	NCryVulkan::CImageResource* const pImage = pView->GetResource()->AsImage();
 	const NCryVulkan::CImageView* const pImageView = pImage ? static_cast<NCryVulkan::CImageView*>(pView) : nullptr;
+
 	if (pImage && pImageView)
 	{
 		uint32 nWidth = pImage->GetWidth();
@@ -337,7 +348,8 @@ STextureLayout CDeviceTexture::GetLayout(D3DBaseView* pView)
 		nHeight = std::max(nHeight >> nFirstMip, 1U);
 		nDepth  = std::max(nDepth  >> nFirstMip, 1U);
 
-		Layout.m_eDstFormat = Layout.m_eSrcFormat = gcpRendD3D->m_hwTexFormatSupport.GetClosestFormatSupported(eTF, Layout.m_pPixelFormat);
+		Layout.m_eSrcFormat =
+		Layout.m_eDstFormat = CRendererResources::s_hwTexFormatSupport.GetClosestFormatSupported(eTF, Layout.m_pPixelFormat);
 		Layout.m_eTT = eTT;
 		Layout.m_eFlags = nFlags;
 		Layout.m_nWidth = nWidth;
@@ -346,6 +358,7 @@ STextureLayout CDeviceTexture::GetLayout(D3DBaseView* pView)
 		Layout.m_nMips = nMips;
 		Layout.m_nArraySize = nSlices;
 	}
+
 	return Layout;
 }
 
@@ -383,11 +396,6 @@ SResourceDimension CDeviceTexture::GetDimension(uint8 mip /*= 0*/, uint8 slices 
 	return Dimension;
 }
 
-void CDeviceTexture::Unbind()
-{
-	VK_NOT_IMPLEMENTED;
-}
-
 #ifdef DEVRES_USE_STAGING_POOL
 
 void CDeviceTexture::DownloadToStagingResource(uint32 nSubRes, StagingHook cbTransfer)
@@ -400,10 +408,10 @@ void CDeviceTexture::DownloadToStagingResource(uint32 nSubRes, StagingHook cbTra
 	const bool bCreateStaging = !pStaging || pStaging->GetStride() * pStaging->GetElementCount() < mapping.MemoryLayout.volumeStride;
 	if (bCreateStaging)
 	{
-		VK_ASSERT(cbTransfer && "Invalid persistent download staging resource size");
+		VK_ASSERT(cbTransfer, "Invalid persistent download staging resource size");
 		if (pImage->GetDevice()->CreateOrReuseStagingResource(pImage, mapping.MemoryLayout.volumeStride, &pStaging, false) != VK_SUCCESS)
 		{
-			VK_ASSERT(false && "Skipping resource download because no staging buffer is available");
+			VK_ASSERT(false, "Skipping resource download because no staging buffer is available");
 			return;
 		}
 	}
@@ -425,7 +433,7 @@ void CDeviceTexture::DownloadToStagingResource(uint32 nSubRes, StagingHook cbTra
 			}
 			else
 			{
-				VK_ASSERT(false && "Unable to map staging resource used for download");
+				VK_ASSERT(false, "Unable to map staging resource used for download");
 			}
 
 			pStaging->Release();
@@ -438,13 +446,13 @@ void CDeviceTexture::DownloadToStagingResource(uint32 nSubRes, StagingHook cbTra
 	else
 	{
 		HRESULT ret = GetDeviceObjectFactory().IssueFence(m_hStagingFence[0]);
-		VK_ASSERT(ret == S_OK && "Failed to issue fence");
+		CRY_VULKAN_VERIFY(ret == S_OK, "Failed to issue fence");
 	}
 }
 
 void CDeviceTexture::DownloadToStagingResource(uint32 nSubRes)
 {
-	VK_ASSERT(m_pStagingResource[0] && "Cannot issue non-callback download without a persistent staging buffer");
+	VK_ASSERT(m_pStagingResource[0], "Cannot issue non-callback download without a persistent staging buffer");
 
 	DownloadToStagingResource(nSubRes, nullptr);
 }
@@ -459,10 +467,10 @@ void CDeviceTexture::UploadFromStagingResource(uint32 nSubRes, StagingHook cbTra
 	const bool bCreateStaging = !pStaging || pStaging->GetStride() * pStaging->GetElementCount() < mapping.MemoryLayout.volumeStride;
 	if (bCreateStaging)
 	{
-		VK_ASSERT(cbTransfer && "Invalid persistent upload staging resource size");
+		VK_ASSERT(cbTransfer, "Invalid persistent upload staging resource size");
 		if (pImage->GetDevice()->CreateOrReuseStagingResource(pImage, mapping.MemoryLayout.volumeStride, &pStaging, true) != VK_SUCCESS)
 		{
-			VK_ASSERT(false && "Skipping resource upload because no staging buffer is available");
+			VK_ASSERT(false, "Skipping resource upload because no staging buffer is available");
 			return;
 		}
 	}
@@ -479,7 +487,7 @@ void CDeviceTexture::UploadFromStagingResource(uint32 nSubRes, StagingHook cbTra
 			}
 			else
 			{
-				VK_ASSERT(false && "Unable to map staging resource used for download");
+				VK_ASSERT(false, "Unable to map staging resource used for download");
 			}
 		}
 		else
@@ -500,13 +508,13 @@ void CDeviceTexture::UploadFromStagingResource(uint32 nSubRes, StagingHook cbTra
 	else
 	{
 		HRESULT ret = GetDeviceObjectFactory().IssueFence(m_hStagingFence[1]);
-		VK_ASSERT(ret == S_OK && "Failed to issue fence");
+		CRY_VULKAN_VERIFY(ret == S_OK, "Failed to issue fence");
 	}
 }
 
 void CDeviceTexture::UploadFromStagingResource(uint32 nSubRes)
 {
-	VK_ASSERT(m_pStagingResource[1] && "Cannot issue non-callback upload without a persistent staging buffer");
+	VK_ASSERT(m_pStagingResource[1], "Cannot issue non-callback upload without a persistent staging buffer");
 
 	UploadFromStagingResource(nSubRes, nullptr);
 }
@@ -514,7 +522,7 @@ void CDeviceTexture::UploadFromStagingResource(uint32 nSubRes)
 void CDeviceTexture::AccessCurrStagingResource(uint32 nSubRes, bool forUpload, StagingHook cbTransfer)
 {
 	NCryVulkan::CImageResource* const pImage = Get2DTexture(); // On Vulkan, also safe if 1D or 3D
-	VK_ASSERT(pImage && m_pStagingResource[forUpload] && m_pStagingMemory[forUpload] && "No persistent staging buffer associated");
+	VK_ASSERT(pImage && m_pStagingResource[forUpload] && m_pStagingMemory[forUpload], "No persistent staging buffer associated");
 
 	// We have to wait for a previous UploadFromStaging/DownloadToStaging to have finished on the GPU, before we can access the staging resource again on CPU.
 	GetDeviceObjectFactory().SyncFence(m_hStagingFence[forUpload], true, true);

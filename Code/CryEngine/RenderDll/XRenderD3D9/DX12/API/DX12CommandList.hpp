@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -520,7 +520,8 @@ public:
 	template<class T> ILINE void   TrackResourceIBVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_INDEX_BUFFER              ) { TrackResourceUsage(pResource,       desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
 	template<class T> ILINE void   TrackResourceVBVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER) { TrackResourceUsage(pResource,       desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
 	template<class T> ILINE void   TrackResourceCBVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER) { TrackResourceUsage(pResource,       desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
-    template<class T> ILINE void   TrackResourceSRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_GENERIC_READ              ) { TrackResourceUsage(pResource, view, desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
+	template<class T> ILINE void   TrackResourceSRVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_GENERIC_READ              ) { TrackResourceUsage(pResource,       desiredState, CMDTYPE_WRITE, CMDTYPE_READ); }
+	template<class T> ILINE void   TrackResourceSRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_GENERIC_READ              ) { TrackResourceUsage(pResource, view, desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
 	template<class T> ILINE void   TrackResourceCRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE ) { TrackResourceUsage(pResource, view, desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
 	template<class T> ILINE void   TrackResourcePRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE     ) { TrackResourceUsage(pResource, view, desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
 	template<class T> ILINE void   TrackResourceUAVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS          ) { TrackResourceUsage(pResource, view, desiredState, pResource.IsConcurrentWritable() ? CMDTYPE_WRITE : CMDTYPE_ANY, pResource.IsConcurrentWritable() ? CMDTYPE_READ : CMDTYPE_ANY); }
@@ -529,10 +530,11 @@ public:
 	template<class T> ILINE void   TrackResourceDRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_DEPTH_READ                ) { TrackResourceUsage(pResource, view, desiredState, CMDTYPE_WRITE, CMDTYPE_READ ); }
 	template<class T> ILINE void   TrackResourceRTVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_RENDER_TARGET             ) { TrackResourceUsage(pResource, view, desiredState, CMDTYPE_ANY  , CMDTYPE_WRITE); }
 	
-	template<class T> ILINE void PrepareResourceIBVUsage(T& pResource                   , D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_INDEX_BUFFER              ) { if (pResource.NeedsTransitionBarrier(this,       desiredState, true)) TrackResourceUsage(pResource,       desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
-	template<class T> ILINE void PrepareResourceVBVUsage(T& pResource                   , D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER) { if (pResource.NeedsTransitionBarrier(this,       desiredState, true)) TrackResourceUsage(pResource,       desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
-	template<class T> ILINE void PrepareResourceCBVUsage(T& pResource                   , D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER) { if (pResource.NeedsTransitionBarrier(this,       desiredState, true)) TrackResourceUsage(pResource,       desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
-    template<class T> ILINE void PrepareResourceSRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_GENERIC_READ              ) { if (pResource.NeedsTransitionBarrier(this, view, desiredState, true)) TrackResourceUsage(pResource, view, desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
+	template<class T> ILINE void PrepareResourceIBVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_INDEX_BUFFER              ) { if (pResource.NeedsTransitionBarrier(this,       desiredState, true)) TrackResourceUsage(pResource,       desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
+	template<class T> ILINE void PrepareResourceVBVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER) { if (pResource.NeedsTransitionBarrier(this,       desiredState, true)) TrackResourceUsage(pResource,       desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
+	template<class T> ILINE void PrepareResourceCBVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER) { if (pResource.NeedsTransitionBarrier(this,       desiredState, true)) TrackResourceUsage(pResource,       desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
+	template<class T> ILINE void PrepareResourceSRVUsage(T& pResource,                    D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_GENERIC_READ              ) { if (pResource.NeedsTransitionBarrier(this,       desiredState, true)) TrackResourceUsage(pResource,       desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
+	template<class T> ILINE void PrepareResourceSRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_GENERIC_READ              ) { if (pResource.NeedsTransitionBarrier(this, view, desiredState, true)) TrackResourceUsage(pResource, view, desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
 	template<class T> ILINE void PrepareResourceCRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE ) { if (pResource.NeedsTransitionBarrier(this, view, desiredState, true)) TrackResourceUsage(pResource, view, desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
 	template<class T> ILINE void PrepareResourcePRVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE     ) { if (pResource.NeedsTransitionBarrier(this, view, desiredState, true)) TrackResourceUsage(pResource, view, desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
 	template<class T> ILINE void PrepareResourceUAVUsage(T& pResource, const CView& view, D3D12_RESOURCE_STATES desiredState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS          ) { if (pResource.NeedsTransitionBarrier(this, view, desiredState, true)) TrackResourceUsage(pResource, view, desiredState, CMDTYPE_ANY, CMDTYPE_WRITE); }
@@ -609,6 +611,18 @@ public:
 	ILINE void SetComputeConstantBufferView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
 	{
 		m_pCmdList->SetComputeRootConstantBufferView(RootParameterIndex, BufferLocation);
+		m_nCommands += CLCOUNT_SETIO;
+	}
+
+	ILINE void SetGraphicsShaderResourceView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
+	{
+		m_pCmdList->SetGraphicsRootShaderResourceView(RootParameterIndex, BufferLocation);
+		m_nCommands += CLCOUNT_SETIO;
+	}
+
+	ILINE void SetComputeShaderResourceView(UINT RootParameterIndex, D3D12_GPU_VIRTUAL_ADDRESS BufferLocation)
+	{
+		m_pCmdList->SetComputeRootShaderResourceView(RootParameterIndex, BufferLocation);
 		m_nCommands += CLCOUNT_SETIO;
 	}
 
@@ -716,6 +730,17 @@ public:
 		m_pCmdList->RSSetScissorRects(NumRects, pRects);
 		m_nCommands += CLCOUNT_SETSTATE;
 	}
+	
+	ILINE void SetDepthBounds(float fMin, float fMax)
+	{
+#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
+		if (m_pCmdList1 && s_DepthBoundsTestSupported)
+		{
+			m_pCmdList1->OMSetDepthBounds(fMin, fMax);
+			m_nCommands += CLCOUNT_SETSTATE;
+		}
+#endif
+	}
 
 	ILINE void SetStencilRef(UINT Ref)
 	{
@@ -750,13 +775,26 @@ public:
 protected:
 	CCommandList(CCommandListPool& pPool);
 	CCommandListPool& m_rPool;
+	
+#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
+	static BOOL s_DepthBoundsTestSupported;
+#endif
+#if NTDDI_WIN10_RS3 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS3)
+	static D3D12_COMMAND_LIST_SUPPORT_FLAGS s_WriteBufferImmediateSupportFlags;
+#endif
 
 	void BindDepthStencilView(const CView& dsv);
 	void BindRenderTargetView(const CView& rtv);
 	void BindUnorderedAccessView(const CView& uav);
 
 	ID3D12Device* m_pD3D12Device;
-	DX12_PTR(ID3D12GraphicsCommandList) m_pCmdList;
+	DX12_PTR(ID3D12GraphicsCommandList)  m_pCmdList;  // RTM
+#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
+	DX12_PTR(ID3D12GraphicsCommandList1) m_pCmdList1; // Creator's Update
+#endif
+#if NTDDI_WIN10_RS3 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS3)
+	DX12_PTR(ID3D12GraphicsCommandList2) m_pCmdList2; // Fall Creator's Update
+#endif
 	DX12_PTR(ID3D12CommandAllocator) m_pCmdAllocator;
 	DX12_PTR(ID3D12CommandQueue) m_pCmdQueue;
 	UINT64 m_UsedFenceValues[CMDTYPE_NUM][CMDQUEUE_NUM];

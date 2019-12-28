@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 // Qt item model for FbxTool scene.
 #pragma once
 
@@ -12,7 +12,7 @@
 
 class CryIcon;
 
-class QTreeView;
+class QAdvancedTreeView;
 class QVariant;
 
 class CSceneElementSkin;

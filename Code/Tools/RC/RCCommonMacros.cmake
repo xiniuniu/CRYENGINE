@@ -85,7 +85,7 @@ endmacro()
 #Specifies a set of platforms that should build source files provided after this point. Specify ALL to build for all platforms.
 #Syntax: sources_platform([OR] X Y Z [AND A B C])
 #Subsequent source files will be built if "if(T)" is true for at least one token T in OR and all tokens T in AND.
-#Example: sources_platform(WIN32 ANDROID AND HAS_FOO) = build if target is Windows or Android, and HAS_FOO is true.
+#Example: sources_platform(WINDOWS ANDROID AND HAS_FOO) = build if target is Windows or Android, and HAS_FOO is true.
 macro(sources_platform)
 	set(PLATFORM_CONDITION)
 	set(multiValueArgs OR AND)
@@ -239,16 +239,23 @@ macro(apply_compile_settings)
 	if(MODULE_SOLUTION_FOLDER)
 		set_solution_folder("${MODULE_SOLUTION_FOLDER}" ${THIS_PROJECT})
 	endif()	
+
+	get_target_property(target_type ${THIS_PROJECT} TYPE)
+	if (target_type MATCHES "EXECUTABLE")
+		target_compile_options(${THIS_PROJECT} PRIVATE -DCRY_IS_APPLICATION)
+	endif()
 endmacro()
 
 macro(set_rc_flags)
 	target_compile_definitions( ${THIS_PROJECT} PRIVATE
-		-DWIN32
 		-DRESOURCE_COMPILER
 		-DFORCE_STANDARD_ASSERT
 		-DNOT_USE_CRY_MEMORY_MANAGER
 	)
-	target_include_directories( ${THIS_PROJECT} PRIVATE 
+    if (WIN32)
+		target_compile_definitions(${THIS_PROJECT} PRIVATE -DWIN32)
+	endif()
+	target_include_directories( ${THIS_PROJECT} PRIVATE
 		${CRYENGINE_SOURCE_DIR}/Code/CryEngine/CryCommon 
 		${SDK_DIR}/boost
 		${CRYENGINE_SOURCE_DIR}/Code/Sandbox/Plugins/EditorCommon 
@@ -259,8 +266,10 @@ function(CryResourceCompiler target)
 	prepare_project(${ARGN})
 	add_executable(${THIS_PROJECT} WIN32 ${${THIS_PROJECT}_SOURCES})
 	set_rc_flags()
-	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
-	set_property(TARGET ${THIS_PROJECT} PROPERTY LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}")	
+	if (WIN32)
+		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
+	endif()
+	set_property(TARGET ${THIS_PROJECT} PROPERTY LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}")
 	set_property(TARGET ${THIS_PROJECT} PROPERTY RUNTIME_OUTPUT_DIRECTORY "${OUTPUT_DIRECTORY}")	
 	#set_property(TARGET ${THIS_PROJECT} PROPERTY ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT_DIRECTORY})
 	set_property(TARGET ${THIS_PROJECT} PROPERTY OUTPUT_NAME "rc")
@@ -297,15 +306,35 @@ endfunction()
 function(CryConsoleApplication target)
 	prepare_project(${ARGN})
 	add_executable(${THIS_PROJECT} ${${THIS_PROJECT}_SOURCES})
-	set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
-	apply_compile_settings()	
+	if (WIN32)
+		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /SUBSYSTEM:CONSOLE")
+	endif()
+	apply_compile_settings()
+endfunction()
+
+function(CryFileContainer target)
+	set(THIS_PROJECT ${target} PARENT_SCOPE)
+	set(THIS_PROJECT ${target})
+	project(${target})
+
+	read_settings(${ARGN})
+	if(NOT ${THIS_PROJECT}_SOURCES)
+		set(${THIS_PROJECT}_SOURCES ${SOURCES})
+	endif()
+
+	add_custom_target( ${THIS_PROJECT} SOURCES ${${THIS_PROJECT}_SOURCES})
+	if(MODULE_SOLUTION_FOLDER)
+		set_solution_folder("${MODULE_SOLUTION_FOLDER}" ${THIS_PROJECT})
+	endif()
 endfunction()
 
 # Common library requirements
 macro(use_fbx_sdk)
 	target_include_directories(${THIS_PROJECT} PRIVATE "${SDK_DIR}/FbxSdk/include")
 	target_compile_definitions(${THIS_PROJECT} PRIVATE -DFBXSDK_NEW_API=1 -DTOOLS_ENABLE_FBX_SDK)
-	if (MSVC_VERSION EQUAL 1900) # Visual Studio 2015
+	if (MSVC_VERSION GREATER 1900) # Visual Studio > 2015
+		set(FBX_SUBFOLDER vs2015)
+	elseif (MSVC_VERSION EQUAL 1900) # Visual Studio 2015
 		set(FBX_SUBFOLDER vs2015)
 	elseif (MSVC_VERSION EQUAL 1800) # Visual Studio 2013
 		set(FBX_SUBFOLDER vs2013)
@@ -322,7 +351,7 @@ macro(use_fbx_sdk)
 endmacro()
 
 macro(use_substance)
-if(WIN64)
+if(WINDOWS)
    SET(LIB_DIR "${SDK_DIR}/SubstanceEngines/lib/win32-msvc2015-64")
    SET(DLL_DIR "${SDK_DIR}/SubstanceEngines/bin/win32-msvc2015-64")
    SET(TINYXML_LIB_DIR "${SDK_DIR}/SubstanceEngines/3rdparty/tinyxml/lib/win32-msvc2015-64")

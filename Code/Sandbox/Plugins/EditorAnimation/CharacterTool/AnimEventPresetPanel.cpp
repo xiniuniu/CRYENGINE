@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -8,8 +8,8 @@
 #include "BlockPaletteContent.h"
 #include <QBoxLayout>
 #include <QDir>
-#include <Serialization/QPropertyTree/QPropertyTree.h>
-#include "../EditorCommon/QPropertyTree/ContextList.h"
+#include <Serialization/QPropertyTreeLegacy/QPropertyTreeLegacy.h>
+#include "QPropertyTreeLegacy/ContextList.h"
 #include "Serialization.h"
 #include "Expected.h"
 #include "CharacterDocument.h"
@@ -41,8 +41,8 @@ AnimEventPresetPanel::AnimEventPresetPanel(QWidget* parent, System* system)
 	EXPECTED(connect(m_palette, SIGNAL(SignalChanged()), this, SLOT(OnPaletteChanged())));
 	layout->addWidget(m_palette);
 
-	m_tree = new QPropertyTree(this);
-	PropertyTreeStyle treeStyle(QPropertyTree::defaultTreeStyle());
+	m_tree = new QPropertyTreeLegacy(this);
+	PropertyTreeStyle treeStyle(QPropertyTreeLegacy::defaultTreeStyle());
 	treeStyle.propertySplitter = false;
 	treeStyle.groupRectangle = false;
 	m_tree->setTreeStyle(treeStyle);

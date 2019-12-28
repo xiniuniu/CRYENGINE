@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -41,7 +41,6 @@ namespace Serialization
 {
 struct INavigationProvider;
 }
-class CDLight;
 
 namespace CharacterTool {
 
@@ -175,6 +174,8 @@ public:
 	CharacterDefinition* GetLoadedCharacterDefinition() const;
 	void                 GetEntriesActiveInDocument(ExplorerEntries* entries) const;
 
+	void                 SetAuxRenderer(IRenderAuxGeom* pAuxRenderer);
+
 	enum { SELECT_DO_NOT_REWIND = 1 << 0 };
 	void                            SetSelectedExplorerEntries(const ExplorerEntries& entries, int selectOptions);
 	bool                            HasModifiedExporerEntriesSelected() const;
@@ -194,8 +195,9 @@ public:
 
 	void          ScrubTime(float time, bool scrubThrough);
 
-	float         PlaybackTime() const        { return m_playbackTime; }
-	float         PlaybackDuration() const    { return m_playbackDuration; }
+	float         PlaybackTime() const                          { return m_playbackTime; }
+	float         PlaybackDuration() const                      { return m_playbackDuration; }
+	float         MaxPlaybackDurationOfAllEnabledLayers() const { return m_maxPlaybackDurationOfAllEnabledLayers; }
 	PlaybackState GetPlaybackState() const;
 	const char*   PlaybackBlockReason() const { return m_playbackBlockReason; }
 	void          Play();
@@ -233,7 +235,6 @@ public slots:
 	void       OnExplorerSelectionChanged();
 	void       OnExplorerActivated(const ExplorerEntry* entry);
 protected slots:
-	void       OnExplorerSelectedEntryClicked(ExplorerEntry* e);
 	void       OnExplorerEntryModified(ExplorerEntryModifyEvent& ev);
 	void       OnExplorerEntrySavedAs(const char* oldPath, const char* newPath);
 	void       OnCompressionMachineAnimationStarted();
@@ -243,16 +244,16 @@ private:
 	void       PlayAnimEvent(ICharacterInstance* character, const AnimEventInstance& event);
 	void       TriggerAnimEventsInRange(float timeFrom, float timeTo);
 
-	string     GetDefaultSkeletonAlias();
 	void       ReloadCHRPARAMS();
 	void       ReleaseObject();
-	void       Physicalize();
+	void       Physicalize(int physLod = 0);
 	void       CreateShaderParamCallbacks();
 	void       CreateShaderParamCallback(const char* name, const char* UIname, uint32 iIndex);
 	void       DrawCharacter(ICharacterInstance* pInstanceBase, const SRenderContext& context);
 	void       PreviewAnimationEntry(bool forceRecompile);
 	void       EnableMotionParameters();
 	void       UpdateBlendShapeParameterList();
+	void       DetermineLayerWithMaxPlaybackDurationOfAllEnabledLayers();
 
 	System*                        m_system;
 
@@ -313,6 +314,11 @@ private:
 	PlaybackOptions                            m_playbackOptions;
 	PlaybackState                              m_playbackState;
 	const char*                                m_playbackBlockReason;
+
+	uint32                                     m_layerIdxMaxPlaybackDurationOfAllEnabledLayers; //!< layer idx with maximum duration of all enabled layers - in case, no layer is enabled, zero
+	float                                      m_maxPlaybackDurationOfAllEnabledLayers;         //!< maximum duration of all enabled layers - in case, no layer is enabled, default value 1.0/30.0f (i.e., 1 Frame)
+
+	IRenderAuxGeom*                            m_pAuxRenderer;
 
 };
 

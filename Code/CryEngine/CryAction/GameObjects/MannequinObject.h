@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -40,9 +40,8 @@ private:
 
 	// IEntityComponent
 	virtual void                  Initialize() override;
-	virtual void                  OnShutDown() override;
-	virtual void                  ProcessEvent(SEntityEvent& event) override;
-	virtual uint64                GetEventMask() const override;
+	virtual void                  ProcessEvent(const SEntityEvent& event) override;
+	virtual Cry::Entity::EventFlags                GetEventMask() const override;
 	virtual IEntityPropertyGroup* GetPropertyGroup() override;
 	virtual void                  GetMemoryUsage(ICrySizer* s) const override;
 	// ~IEntityComponent

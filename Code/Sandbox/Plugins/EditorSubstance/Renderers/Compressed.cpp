@@ -1,3 +1,5 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 #include "Compressed.h"
 #include "EditorSubstanceManager.h"
@@ -160,13 +162,14 @@ namespace EditorSubstance
 				FT_textureFlags |= FT_ALPHA;
 			if (data->flags & EditorSubstance::TF_HAS_ATTACHED_ALPHA)
 				FT_textureFlags |= FT_HAS_ATTACHED_ALPHA;
-		//	FT_textureFlags |= FT_DONT_RELEASE;
-		//	FT_textureFlags |= FT_DONT_STREAM;
-			ITexture* targetTexture = GetIEditor()->GetSystem()->GetIRenderer()->EF_GetTextureByName(textureName, FT_textureFlags);
-			if (!targetTexture)
-				targetTexture = GetIEditor()->GetSystem()->GetIRenderer()->EF_LoadTexture(textureName, FT_textureFlags);
 
-			const SubstanceTexture& texture = result->getTexture();;
+			ITexture* const pTargetTexture = GetIEditor()->GetSystem()->GetIRenderer()->EF_GetTextureByName(textureName, FT_textureFlags);
+			if (!pTargetTexture)
+			{
+				return;
+			}
+
+			const SubstanceTexture& texture = result->getTexture();
 
 			ETEX_Format resultFormat;
 			int formatFlag = texture.pixelFormat & 0x1F;
@@ -195,15 +198,17 @@ namespace EditorSubstance
 				return;
 			}
 
-			STexData sd;
-			sd.m_nHeight = texture.level0Height;
-			sd.m_nWidth = texture.level0Width;
-			sd.m_nMips = texture.mipmapCount;
-			sd.m_pFilePath = textureName;
-			sd.m_eFormat = resultFormat;
-			sd.m_nFlags = FIM_textureFlags;
-			sd.m_pData[0] = (byte*)texture.buffer;
-			uint32 targetFlags = targetTexture->GetFlags();
+			STexDataPtr td = new STexData;
+
+			td->m_nHeight = texture.level0Height;
+			td->m_nWidth = texture.level0Width;
+			td->m_nMips = texture.mipmapCount;
+			td->m_pFilePath = textureName;
+			td->m_eFormat = resultFormat;
+			td->m_nFlags = FIM_textureFlags;
+			td->m_pData[0] = (const byte*)texture.buffer;
+
+			uint32 targetFlags = pTargetTexture->GetFlags();
 			targetFlags &= ~(FT_ALPHA);
 			targetFlags &= ~(FT_HAS_ATTACHED_ALPHA);
 			if (FT_textureFlags & FT_ALPHA)
@@ -212,12 +217,12 @@ namespace EditorSubstance
 				targetFlags |= FT_HAS_ATTACHED_ALPHA;
 
 
-			if (sd.m_nFlags & FIM_NORMALMAP)
+			if (td->m_nFlags & FIM_NORMALMAP)
 			{
-				if (sd.m_eFormat == eTF_BC5U)
+				if (td->m_eFormat == eTF_BC5U)
 				{
-					unsigned char *blocks = sd.m_pData[0];
-					unsigned char *end = sd.m_pData[0] + TextureDataSize(sd.m_nWidth, sd.m_nHeight, sd.m_nDepth, sd.m_nMips, sd.m_eFormat);
+					unsigned char *blocks = (byte*)texture.buffer;
+					unsigned char *end = (byte*)texture.buffer + TextureDataSize(td->m_nWidth, td->m_nHeight, td->m_nDepth, td->m_nMips, td->m_eFormat);
 					while (blocks < end)
 					{
 						// Cheapest transform, always rounds towards negative infinity (because the input is entirely positive)
@@ -228,12 +233,12 @@ namespace EditorSubstance
 
 						blocks += 4;
 					}
-					sd.m_eFormat = eTF_BC5S;
+
+					td->m_eFormat = eTF_BC5S;
 				}
-
-
 			}
-			targetTexture->UpdateData(sd, targetFlags);
+
+			pTargetTexture->UpdateData(std::move(td), targetFlags);
 		}
 
 		uint32 CCompressedRenderer::TextureDataSize(uint32 nWidth, uint32 nHeight, uint32 nDepth, uint32 nMips, const ETEX_Format eTF) const

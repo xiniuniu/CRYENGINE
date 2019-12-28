@@ -113,10 +113,11 @@ protected:
 };
 CPhysRenderer g_PhysRenderer;
 
-struct DisplayContextImp : DisplayContext {
+struct DisplayContextImp : SDisplayContext {
 	DisplayContextImp(CCamera *cam) { camera = cam; }
 	virtual void DrawLine(const Vec3& pt0, const Vec3& pt1, const ColorF& clr0, const ColorF& clr1);
 	virtual void DrawBall(const Vec3& c, float r);
+	virtual void DrawSolidBox(const Vec3& vmin, const Vec3& vmax);
 	virtual void DrawTextLabel(const Vec3& pt, float fontSize, const char* txt, bool center) { g_PhysRenderer.DrawText(pt,txt,m_color,center); }
 	virtual void SetColor(COLORREF clr, float alpha=1);
 	ColorB m_color = { 255,255,255,255 };
@@ -147,7 +148,12 @@ extern "C" CRYPHYSICS_API ProfilerData *GetProfileData(int iThread);
 
 struct CSystemImp : ISystem {
 	virtual IPhysRenderer *GetIPhysRenderer() const { return &g_PhysRenderer; }
-	virtual float GetCurrTime() const { return time; }
+	virtual float GetCurrTime(ITimer::ETimer) const { return time; }
+	void UpdateTime() {
+		__int64 curTime;
+		QueryPerformanceCounter((LARGE_INTEGER*)&curTime);
+		time = (float)(((curTime-g_time0)*10000)/g_freq)*0.0001f;
+	}
 	float time = 0;
 } g_System;
 struct SEnvImp : SEnv {
@@ -157,7 +163,7 @@ SEnv *gEnv = &env;
 
 void ResetProfiler(ProfilerData *pd, int threads=-1)
 {
-	for(int i=0; i<=MAX_PHYS_THREADS; i++) if (threads & 1<<i) {
+	for(int i=0; i<MAX_PHYS_THREADS+MAX_EXT_THREADS; i++) if (threads & 1<<i) {
 		pd[i].iLevel = 0;
 		pd[i].sec0.m_iCurCode = 0;
 		pd[i].sec0.m_iCurSlot = pd[i].iLastSampleSlot = pd[i].iLastTimeSample = 0;
@@ -246,6 +252,11 @@ void SelectPrevProfVisInfo()
 void ExpandProfVisInfo(int bExpand)
 {
 	g_ProfVisInfos[getProfVisInfo(g_iActiveCode,1)].bExpanded = bExpand;
+}
+
+void NotifyStartSim() 
+{ 
+	g_Tool.OnEditorNotifyEvent(eNotify_OnBeginSimulationMode); 
 }
 
 DWORD WINAPI PhysProc(void *pParam)
@@ -369,19 +380,28 @@ void ReloadWorldAndGeometries(const char *fworld, const char *fgeoms)
 	int i,nEnts;
 
 	ResetProfiler(g_pPhysProfilerData);
-	if (!(nEnts = g_pWorld->GetEntitiesInBox(bbox[0],bbox[1],ppEnts,ent_rigid)))
-		nEnts = g_pWorld->GetEntitiesInBox(bbox[0],bbox[1],ppEnts,ent_independent);
-	for(i=0,pos.z=-1e10f; i<nEnts; i++) {
-		ppEnts[i]->GetStatus(&sp);
-		pos += (sp.pos-pos)*(float)isneg(pos.z-sp.pos.z);
-	}
 
-	if (g_pWorld->GetEntitiesInBox(bbox[0],bbox[1],ppEnts,ent_living)) {
-		ppEnts[0]->GetStatus(&sp);
-		g_campos = sp.pos;
-	}	else
-		g_campos = pos+Vec3(0,1,1);
-	g_camdir = (pos-g_campos).normalized();
+	sp.pos.zero();
+	sp.q.SetIdentity();
+	IPhysicalEntity *player;
+	if (!(player = g_pWorld->GetPhysicalEntityById(0x7777)) || !player->GetStatus(&sp) || sp.pos.len2()) { 
+		pe_player_dimensions pd;
+		for(i=g_pWorld->GetEntitiesInBox(bbox[0],bbox[1],ppEnts,ent_living)-1; i>=0 && !(ppEnts[i]->GetParams(&pd) && !pd.sizeCollider.x); i--);
+		if (i>=0)
+			ppEnts[i]->GetStatus(&sp);
+		else {
+			if (!(nEnts = g_pWorld->GetEntitiesInBox(bbox[0],bbox[1],ppEnts,ent_rigid)))
+				nEnts = g_pWorld->GetEntitiesInBox(bbox[0],bbox[1],ppEnts,ent_independent);
+			for(i=0,pos.z=-1e10f; i<nEnts; i++) {
+				ppEnts[i]->GetStatus(&sp);
+				pos += (sp.pos-pos)*(float)isneg(pos.z-sp.pos.z);
+			}
+			g_campos = pos-Vec3(0,1,0);
+		}
+	}
+	g_campos = sp.pos;
+	g_camdir = sp.q*Vec3(0,1,0);
+
 	ReleaseMutex(g_hThreadActive);
 	g_pWorld->GetPhysVars()->bSingleStepMode = 0;
 
@@ -486,10 +506,15 @@ void OnMouseEvent(uint evtWin, int x, int y, int flags)
 		case WM_MOUSEMOVE  : evt = eMouseMove; break;
 		default: return;
 	}
-	g_Tool.MouseCallback((CViewport*)&g_Cam, evt, CPoint(x,y), flags);
+	CPoint pt(x,y);
+	g_Tool.MouseCallback((CViewport*)&g_Cam, evt, pt, flags);
 }
 
-void OnSetCursor() { g_Tool.OnSetCursor((CViewport*)&g_Cam); }
+void OnSetCursor() 
+{ 
+	g_System.UpdateTime();
+	g_Tool.Display(g_DC); 
+}
 
 #include <CryNetwork\ISerialize.h>
 struct SMemSaver : ISerialize {
@@ -626,9 +651,7 @@ void ProcessPhysProfileNode(phys_profile_info &info)
 
 void RenderWorld(HWND hWnd, HDC hDC)
 {
-	__int64 curTime;
-	QueryPerformanceCounter((LARGE_INTEGER*)&curTime);
-	g_System.time = (float)(((curTime-g_time0)*10000)/g_freq)*0.0001f;
+	g_System.UpdateTime();
 
 	RECT rect;
 	GetClientRect(hWnd, &rect);
@@ -735,7 +758,7 @@ void RenderWorld(HWND hWnd, HDC hDC)
 		if (!g_sync)
 			WaitForSingleObject(g_hThreadActive,INFINITE);
 		DrawProfileNode(offsx+40,20,tm.tmHeight, g_pPhysProfilerData,0);
-		ResetProfiler(g_pPhysProfilerData, 1<<MAX_PHYS_THREADS);
+		ResetProfiler(g_pPhysProfilerData, ((1<<MAX_EXT_THREADS)-1)<<MAX_PHYS_THREADS);
 	}
 	if (g_bShowProfiler & 1 || g_sync) 
 		ReleaseMutex(g_hThreadActive);
@@ -750,8 +773,12 @@ void RenderWorld(HWND hWnd, HDC hDC)
 	sprintf_s(str, "PhysFPS %d %s", fps, fps==100 ? "(cap)":"");
 	glRasterPos2i(rect.right-20-sz.cx,20+sz.cy);
 	glCallLists(strlen(str), GL_UNSIGNED_BYTE, str);
-	if (!g_bAnimate)
+	if (!g_bAnimate) {
 		g_pWorld->GetPhysVars()->lastTimeStep = 0;
+		glRasterPos2i(20,rect.bottom-(sz.cy*3>>1));
+		strcpy(str, "Press F1 to start the simulation");
+		glCallLists(strlen(str), GL_UNSIGNED_BYTE, str);
+	}
 
 	g_PhysRenderer.DrawTextBuffers(hDC);
 
@@ -946,9 +973,11 @@ void CPhysRenderer::DrawGeometry(IGeometry *pGeom, geom_world_data *pgwd, const 
 					clrlit[0] = clrhf[(i^j)&1];
 					pt[2] = R*Vec3((i+1)*phf->step.x, j*phf->step.y, getheight(phf,i+1,j))*scale + pos;
 					pt[3] = R*Vec3((i+1)*phf->step.x, (j+1)*phf->step.y, getheight(phf,i+1,j+1))*scale + pos;
-					_clr(clrlit[0]);
-					_vtx(pt[0]); _vtx(pt[2]); _vtx(pt[1]);
-					_vtx(pt[1]); _vtx(pt[2]); _vtx(pt[3]);
+					if (!phf->fpGetSurfTypeCallback || phf->fpGetSurfTypeCallback(i,j)!=phf->typehole) {
+						_clr(clrlit[0]);
+						_vtx(pt[0]); _vtx(pt[2]); _vtx(pt[1]);
+						_vtx(pt[1]); _vtx(pt[2]); _vtx(pt[3]);
+					}
 					pt[0] = pt[2]; pt[1] = pt[3];
 				}
 			}	glEnd();
@@ -1075,6 +1104,18 @@ void DisplayContextImp::DrawBall(const Vec3& c, float r)
 	glTranslatef(c.x,c.y,c.z);
 	gluSphere(quad,r,16,8);
 	glPopMatrix();
+}
+
+void DisplayContextImp::DrawSolidBox(const Vec3& vmin, const Vec3& vmax)
+{
+	glBegin(GL_QUADS);
+	Vec3 c=(vmin+vmax)*0.5f, sz=(vmax-vmin)*0.5f;
+	for(int sg=-1;sg<=1;sg+=2) for(int i=0,j;i<3;i++) for(Vec2i rot(1,(j=0,1));j<4;j++,rot=Vec2i(-rot.y*sg,rot.x*sg))	{
+		Vec3 pt=c; pt[i]+=sz[i]*sg;
+		pt[incm3(i)]+=sz[incm3(i)]*rot.x; pt[decm3(i)]+=sz[decm3(i)]*rot.y;
+		_vtx(pt);
+	}
+	glEnd();
 }
 
 void DisplayContextImp::SetColor(COLORREF clr, float alpha) 

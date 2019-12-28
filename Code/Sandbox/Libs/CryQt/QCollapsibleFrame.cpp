@@ -1,8 +1,16 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
-#include <StdAfx.h>
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+#include "StdAfx.h"
 #include "QCollapsibleFrame.h"
 
-#include <qtabbar.h>
+#include <QApplication>
+#include <QEvent>
+#include <QFrame>
+#include <QLabel>
+#include <QPushButton>
+#include <QStyleOption>
+#include <QTabBar>
+#include <QToolButton>
+#include <QVBoxLayout>
 
 // removes dark tinting
 const CryIconColorMap CCollapsibleFrameHeader::s_colorMap = []
@@ -44,10 +52,10 @@ void QCollapsibleFrame::SetWidget(QWidget* pWidget)
 
 	auto pMainLayout = m_pContentsFrame->layout();
 
-	// remove old widget
 	if (m_pWidget)
 	{
 		pMainLayout->removeWidget(m_pWidget);
+		m_pWidget->deleteLater();
 	}
 
 	m_pWidget = pWidget;

@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -64,6 +64,7 @@ struct SQueuedObjectSignal
 };
 
 typedef std::deque<SQueuedObjectSignal> ObjectSignalQueue;
+typedef std::vector<IObjectSignalListener*> SignalListener;
 
 class CObject : public IObject
 {
@@ -139,7 +140,7 @@ public:
 	virtual void*                GetCustomData() const override;
 	virtual ESimulationMode      GetSimulationMode() const override;
 
-	virtual bool                 SetSimulationMode(ESimulationMode simulationMode, EObjectSimulationUpdatePolicy updatePolicy, bool bStartSimulation) override;
+	virtual bool                 SetSimulationMode(ESimulationMode simulationMode, EObjectSimulationUpdatePolicy updatePolicy) override;
 	virtual void                 ProcessSignal(const SObjectSignal& signal) override;
 	virtual void                 StopAction(CAction& action) override;
 
@@ -149,6 +150,9 @@ public:
 	virtual IEntity*             GetEntity() const final           { return m_pEntity; };
 
 	virtual IObjectPropertiesPtr GetObjectProperties() const final { return m_pProperties; };
+
+	virtual void                 AddSignalListener(IObjectSignalListener& signalListener) override;
+	virtual void                 RemoveSignalListener(IObjectSignalListener& signalListener) override;
 	// ~IObject
 
 	CScratchpad&      GetScratchpad();
@@ -223,6 +227,8 @@ private:
 
 	bool                  m_bQueueSignals;
 	ObjectSignalQueue     m_signalQueue;
+
+	SignalListener        m_signalListener;
 
 	CConnectionScope      m_connectionScope;
 

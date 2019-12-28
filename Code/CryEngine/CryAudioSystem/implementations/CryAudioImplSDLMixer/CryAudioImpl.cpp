@@ -1,12 +1,16 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
-#include "AudioImpl.h"
-#include "AudioImplCVars.h"
+#include "Impl.h"
+#include "CVars.h"
 #include <CryAudio/IAudioSystem.h>
 #include <CryCore/Platform/platform_impl.inl>
 #include <CrySystem/IEngineModule.h>
 #include <CryExtension/ClassWeaver.h>
+
+#if defined(CRY_AUDIO_IMPL_SDLMIXER_USE_DEBUG_CODE)
+	#include <Logger.h>
+#endif  // CRY_AUDIO_IMPL_SDLMIXER_USE_DEBUG_CODE
 
 namespace CryAudio
 {
@@ -15,7 +19,6 @@ namespace Impl
 namespace SDL_mixer
 {
 // Define global objects.
-CLogger g_implLogger;
 CCVars g_cvars;
 
 //////////////////////////////////////////////////////////////////////////
@@ -35,21 +38,25 @@ class CEngineModule_CryAudioImplSDLMixer : public IImplModule
 	virtual char const* GetCategory() const override { return "CryAudio"; }
 
 	//////////////////////////////////////////////////////////////////////////
-	virtual bool Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override
+	virtual bool Initialize(SSystemGlobalEnvironment& env, SSystemInitParams const& initParams) override
 	{
 		gEnv->pAudioSystem->AddRequestListener(&CEngineModule_CryAudioImplSDLMixer::OnEvent, nullptr, ESystemEvents::ImplSet);
 		SRequestUserData const data(ERequestFlags::ExecuteBlocking | ERequestFlags::CallbackOnExternalOrCallingThread);
+
+		MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::SDL_mixer::CImpl");
 		gEnv->pAudioSystem->SetImpl(new CImpl, data);
 		gEnv->pAudioSystem->RemoveRequestListener(&CEngineModule_CryAudioImplSDLMixer::OnEvent, nullptr);
 
+#if defined(CRY_AUDIO_IMPL_SDLMIXER_USE_DEBUG_CODE)
 		if (m_bSuccess)
 		{
-			g_implLogger.Log(ELogType::Always, "CryAudioImplSDLMixer loaded");
+			Cry::Audio::Log(ELogType::Always, "CryAudioImplSDLMixer loaded");
 		}
 		else
 		{
-			g_implLogger.Log(ELogType::Error, "CryAudioImplSDLMixer failed to load");
+			Cry::Audio::Log(ELogType::Error, "CryAudioImplSDLMixer failed to load");
 		}
+#endif    // CRY_AUDIO_IMPL_SDLMIXER_USE_DEBUG_CODE
 
 		return m_bSuccess;
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -6,21 +6,22 @@
 #include "QToolWindowManager.h"
 #include "QToolWindowWrapper.h"
 
-#include <QApplication>
-#include <QLabel>
-#include <QBoxLayout>
-#include <QPaintEngine>
-#include <QTabBar>
-#include <QStylePainter>
-#include <QStyleOptionToolBar>
-#include <QMouseEvent>
-#include <QMenu>
 #include <QAction>
+#include <QApplication>
+#include <QBoxLayout>
+#include <QGridLayout>
+#include <QLabel>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QPaintEngine>
+#include <QStyleOptionToolBar>
+#include <QStylePainter>
+#include <QTabBar>
 
-QToolWindowArea::QToolWindowArea(QToolWindowManager* manager, QWidget *parent /*= 0*/)
+QToolWindowArea::QToolWindowArea(QToolWindowManager* manager, QWidget* parent /*= 0*/)
 	: QTabWidget(parent),
 	m_manager(manager),
-	m_tabDragCanStart(false), 
+	m_tabDragCanStart(false),
 	m_areaDragCanStart(false)
 {
 	setTabBar(new QToolWindowTabBar(this));
@@ -34,47 +35,52 @@ QToolWindowArea::QToolWindowArea(QToolWindowManager* manager, QWidget *parent /*
 	tabBar()->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 	setFocusPolicy(Qt::StrongFocus);
 	bool areaUseImageHandle = m_manager->config().value(QTWM_AREA_IMAGE_HANDLE, false).toBool();
-	m_tabFrame = new QToolWindowSingleTabAreaFrame(manager, this);
-	m_tabFrame->hide();	
-	
-	QLabel* corner = new QLabel(this);
-	corner->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-	corner->setAttribute(Qt::WA_TranslucentBackground);
-	setCornerWidget(corner);
-	if (areaUseImageHandle)
-	{
-		QPixmap corner_img;
-		corner_img.load(manager->config().value(QTWM_DROPTARGET_COMBINE, ":/QtDockLibrary/gfx/drag_handle.png").toString());
-		corner->setPixmap(corner_img);
-	}
-	else
-	{
-		corner->setFixedWidth(8);
-		QPixmap corner_img(corner->size());
-		corner_img.fill(Qt::transparent);
+	m_pTabFrame = new QToolWindowSingleTabAreaFrame(manager, this);
+	m_pTabFrame->hide();
 
-		QStyleOptionToolBar option;
-		option.initFrom(tabBar());
-		option.state |= QStyle::State_Horizontal;
-		option.lineWidth = tabBar()->style()->pixelMetric(QStyle::PM_ToolBarFrameWidth, 0, tabBar());
-		option.features = QStyleOptionToolBar::Movable;
-		option.toolBarArea = Qt::NoToolBarArea;
-		option.direction = Qt::RightToLeft;
-		option.rect = corner_img.rect();
-		option.rect.moveTo(0,0);
+	if (m_manager->config().value(QTWM_AREA_SHOW_DRAG_HANDLE, false).toBool())
+	{
+		QLabel* corner = new QLabel(this);
+		corner->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+		corner->setAttribute(Qt::WA_TranslucentBackground);
+		setCornerWidget(corner);
+		if (areaUseImageHandle)
+		{
+			QPixmap corner_img;
+			corner_img.load(manager->config().value(QTWM_DROPTARGET_COMBINE, ":/QtDockLibrary/gfx/drag_handle.png").toString());
+			corner->setPixmap(corner_img);
+		}
+		else
+		{
+			corner->setFixedWidth(8);
+			QPixmap corner_img(corner->size());
+			corner_img.fill(Qt::transparent);
 
-		QPainter painter(&corner_img);
-		tabBar()->style()->drawPrimitive(QStyle::PE_IndicatorToolBarHandle, &option, &painter, corner);
-		corner->setPixmap(corner_img);
+			QStyleOptionToolBar option;
+			option.initFrom(tabBar());
+			option.state |= QStyle::State_Horizontal;
+			option.lineWidth = tabBar()->style()->pixelMetric(QStyle::PM_ToolBarFrameWidth, 0, tabBar());
+			option.features = QStyleOptionToolBar::Movable;
+			option.toolBarArea = Qt::NoToolBarArea;
+			option.direction = Qt::RightToLeft;
+			option.rect = corner_img.rect();
+			option.rect.moveTo(0, 0);
+
+			QPainter painter(&corner_img);
+			tabBar()->style()->drawPrimitive(QStyle::PE_IndicatorToolBarHandle, &option, &painter, corner);
+			corner->setPixmap(corner_img);
+		}
+		corner->setCursor(Qt::CursorShape::OpenHandCursor);
+		corner->installEventFilter(this);
 	}
-	corner->setCursor(Qt::CursorShape::OpenHandCursor);
-	corner->installEventFilter(this);
 	tabBar()->installEventFilter(this);
-	m_tabFrame->installEventFilter(this);
-	m_tabFrame->m_caption->installEventFilter(this);
+	m_pTabFrame->installEventFilter(this);
+	m_pTabFrame->m_pCaption->installEventFilter(this);
 
 	tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
-	connect(tabBar(), SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(showContextMenu(const QPoint &)));
+	setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(this, SIGNAL(customContextMenuRequested(const QPoint&)), this, SLOT(showContextMenu(const QPoint&)));
+	connect(tabBar(), SIGNAL(customContextMenuRequested(const QPoint&)), this, SLOT(showContextMenu(const QPoint&)));
 	connect(tabBar(), SIGNAL(tabCloseRequested(int)), this, SLOT(closeTab(int)));
 }
 
@@ -103,14 +109,14 @@ void QToolWindowArea::addToolWindow(QWidget* toolWindow, int index /*= -1 */)
 void QToolWindowArea::addToolWindows(const QList<QWidget*>& toolWindows, int index /*= -1 */)
 {
 	int newIndex = index;
-	foreach(QWidget* toolWindow, toolWindows)
+	foreach(QWidget * toolWindow, toolWindows)
 	{
 		if (m_manager->config().value(QTWM_AREA_TAB_ICONS, false).toBool())
 		{
 			if (index < 0)
 			{
 				newIndex = addTab(toolWindow, toolWindow->windowIcon(), toolWindow->windowTitle());
-			}	
+			}
 			else
 			{
 				newIndex = insertTab(newIndex, toolWindow, toolWindow->windowIcon(), toolWindow->windowTitle()) + 1;
@@ -121,7 +127,7 @@ void QToolWindowArea::addToolWindows(const QList<QWidget*>& toolWindows, int ind
 			if (index < 0)
 			{
 				newIndex = addTab(toolWindow, toolWindow->windowTitle());
-			}	
+			}
 			else
 			{
 				newIndex = insertTab(newIndex, toolWindow, toolWindow->windowTitle()) + 1;
@@ -133,30 +139,30 @@ void QToolWindowArea::addToolWindows(const QList<QWidget*>& toolWindows, int ind
 			tabBar()->setTabButton(newIndex, QTabBar::ButtonPosition::RightSide, createCloseButton());
 		}
 
-#if QT_VERSION >= 0x050000
-		connect(toolWindow, &QWidget::windowTitleChanged, this, [this, newIndex, toolWindow](const QString& title)
+		connect(toolWindow, &QWidget::windowTitleChanged, this, [this, toolWindow](const QString& title)
 		{
-			if (indexOf(toolWindow) >= 0)
+			int index = indexOf(toolWindow);
+			if (index >= 0)
 			{
-				setTabText(newIndex, title);
+			  setTabText(index, title);
 			}
 			if (count() == 1)
 			{
-				setWindowTitle(title);
+			  setWindowTitle(title);
 			}
 		});
-		connect(toolWindow, &QWidget::windowIconChanged, this, [this, newIndex, toolWindow](const QIcon& icon)
+		connect(toolWindow, &QWidget::windowIconChanged, this, [this, toolWindow](const QIcon& icon)
 		{
+			int index = indexOf(toolWindow);
 			if (indexOf(toolWindow) >= 0)
 			{
-				setTabIcon(newIndex, icon);
+			  setTabIcon(index, icon);
 			}
 			if (count() == 1)
 			{
-				setWindowIcon(icon);
+			  setWindowIcon(icon);
 			}
 		});
-#endif
 	}
 	setCurrentWidget(toolWindows.first());
 }
@@ -192,44 +198,48 @@ void QToolWindowArea::removeToolWindow(QWidget* toolWindow)
 	{
 		removeTab(i);
 	}
-	else if (m_tabFrame->contents() == toolWindow)
+	else if (m_pTabFrame->contents() == toolWindow)
 	{
-		const int i = indexOf(m_tabFrame);
+		const int i = indexOf(m_pTabFrame);
 		if (i != -1)
 		{
 			removeTab(i);
 		}
-		m_tabFrame->setContents(nullptr);
+		m_pTabFrame->setContents(nullptr);
 	}
 }
 
 QList<QWidget*> QToolWindowArea::toolWindows()
 {
-	QList<QWidget *> result;
-	for(int i = 0; i < count(); i++)
+	QList<QWidget*> result;
+	for (int i = 0; i < count(); i++)
 	{
 		QWidget* w = widget(i);
-		if (w == m_tabFrame)
+		if (w == m_pTabFrame)
 		{
-			w = m_tabFrame->contents();
+			w = m_pTabFrame->contents();
 		}
 		result << w;
 	}
 	return result;
 }
 
-bool QToolWindowArea::eventFilter(QObject *o, QEvent *ev)
+bool QToolWindowArea::eventFilter(QObject* pObject, QEvent* pEvent)
 {
-	if (o == tabBar() || o == cornerWidget() || o == m_tabFrame || o == m_tabFrame->m_caption)
+	if (pObject == tabBar() || pObject == cornerWidget() || pObject == m_pTabFrame || pObject == m_pTabFrame->m_pCaption)
 	{
-		if (ev->type() == QEvent::MouseButtonPress)
-		{			
-			QMouseEvent* me = static_cast<QMouseEvent*>(ev);
-			if ((o == m_tabFrame && m_tabFrame->m_caption->rect().contains(me->pos())) || o == m_tabFrame->m_caption || (o == tabBar() && tabBar()->tabAt(static_cast<QMouseEvent*>(ev)->pos()) >= 0))
+		if (pEvent->type() == QEvent::MouseButtonPress)
+		{
+			// Set default values to not allow dragging
+			m_areaDragCanStart = false;
+			m_tabDragCanStart = false;
+
+			QMouseEvent* me = static_cast<QMouseEvent*>(pEvent);
+			if ((pObject == m_pTabFrame && m_pTabFrame->m_pCaption->rect().contains(me->pos())) || pObject == m_pTabFrame->m_pCaption || (pObject == tabBar() && tabBar()->tabAt(static_cast<QMouseEvent*>(pEvent)->pos()) >= 0))
 			{
 				m_tabDragCanStart = true;
-			}	
-			else if (o == cornerWidget() || (o == tabBar() && cornerWidget()->isVisible() && m_manager->config().value(QTWM_AREA_EMPTY_SPACE_DRAG, false).toBool()))
+			}
+			else if (m_manager->config().value(QTWM_AREA_SHOW_DRAG_HANDLE, false).toBool() && (pObject == cornerWidget() || (pObject == tabBar() && cornerWidget()->isVisible() && m_manager->config().value(QTWM_AREA_EMPTY_SPACE_DRAG, false).toBool())))
 			{
 				m_areaDragCanStart = true;
 			}
@@ -242,23 +252,27 @@ bool QToolWindowArea::eventFilter(QObject *o, QEvent *ev)
 				}
 			}
 		}
-		else if (ev->type() == QEvent::MouseMove)
+		else if (pEvent->type() == QEvent::MouseMove)
 		{
-			QMouseEvent* me = static_cast<QMouseEvent*>(ev);
+			QMouseEvent* me = static_cast<QMouseEvent*>(pEvent);
 			if (m_tabDragCanStart)
 			{
-				if (tabBar()->rect().contains(me->pos()) || cornerWidget()->rect().contains(me->pos()))
+				if (tabBar()->rect().contains(me->pos()) || (m_manager->config().value(QTWM_AREA_SHOW_DRAG_HANDLE, false).toBool() && cornerWidget()->rect().contains(me->pos())))
 				{
 					return false;
 				}
 				if (qApp->mouseButtons() != Qt::LeftButton)
 				{
 					return false;
-				}	
+				}
 				QWidget* toolWindow = currentWidget();
-				if (qobject_cast<QToolWindowSingleTabAreaFrame*>(toolWindow) == m_tabFrame)
+				if (qobject_cast<QToolWindowSingleTabAreaFrame*>(toolWindow) == m_pTabFrame)
 				{
-					toolWindow = m_tabFrame->contents();
+					toolWindow = m_pTabFrame->contents();
+				}
+				if (!toolWindow)
+				{
+					return false;
 				}
 				m_tabDragCanStart = false;
 				//stop internal tab drag in QTabBar
@@ -269,28 +283,77 @@ bool QToolWindowArea::eventFilter(QObject *o, QEvent *ev)
 			}
 			else if (m_areaDragCanStart)
 			{
-				if (qApp->mouseButtons() == Qt::LeftButton && !cornerWidget()->rect().contains(mapFromGlobal(QCursor::pos())))
+				if (qApp->mouseButtons() == Qt::LeftButton && !(m_manager->config().value(QTWM_AREA_SHOW_DRAG_HANDLE, false).toBool() && cornerWidget()->rect().contains(mapFromGlobal(QCursor::pos()))))
 				{
 					QList<QWidget*> toolWindows;
 					for (int i = 0; i < count(); i++)
 					{
 						QWidget* toolWindow = widget(i);
-						if (qobject_cast<QToolWindowSingleTabAreaFrame*>(toolWindow) == m_tabFrame)
+						if (qobject_cast<QToolWindowSingleTabAreaFrame*>(toolWindow) == m_pTabFrame)
 						{
-							toolWindow = m_tabFrame->contents();
+							toolWindow = m_pTabFrame->contents();
 						}
 						toolWindows << toolWindow;
 					}
 					m_areaDragCanStart = false;
 					QMouseEvent* releaseEvent = new QMouseEvent(QEvent::MouseButtonRelease, me->pos(), Qt::LeftButton, Qt::LeftButton, 0);
-					qApp->sendEvent(cornerWidget(), releaseEvent);
+					if (cornerWidget())
+					{
+						qApp->sendEvent(cornerWidget(), releaseEvent);
+					}
 					m_manager->startDrag(toolWindows, this);
 					releaseMouse();
 				}
 			}
 		}
 	}
-	return QTabWidget::eventFilter(o, ev);
+	return QTabWidget::eventFilter(pObject, pEvent);
+}
+
+bool QToolWindowArea::event(QEvent* event)
+{
+	//Here we deal with area drag, drag can happen only if the QTWM_AREA_SHOW_DRAG_HANDLE is disabled and we are not in a floating window. Also dragging the tool windows is not allowed
+	if (!m_areaDragCanStart && event->type() == QEvent::MouseButtonPress && !m_manager->config().value(QTWM_AREA_SHOW_DRAG_HANDLE, false).toBool()) // in this case we are dragging the tab frame
+	{
+		//If in a floating wrapper then we cannot drag
+		bool floatingWrapper = false;
+		IToolWindowWrapper* pWrapper = wrapper();
+		if (pWrapper && m_manager->isFloatingWrapper(pWrapper->getWidget()))
+		{
+			floatingWrapper = true;
+		}
+
+		//event with a mouse can also be triggered by bubbling, to avoid that we check that the mouse is outside of the child widget
+		if (!floatingWrapper && currentWidget() && !currentWidget()->rect().contains(currentWidget()->mapFromGlobal(QCursor::pos())))
+		{
+			m_areaDragCanStart = true;
+		}
+	}
+	else if (event->type() == QEvent::MouseMove && !m_manager->config().value(QTWM_AREA_SHOW_DRAG_HANDLE, false).toBool())
+	{
+		if (m_areaDragCanStart)
+		{
+			//actually start the drag operation
+			if (qApp->mouseButtons() == Qt::LeftButton)
+			{
+				QList<QWidget*> toolWindows;
+				for (int i = 0; i < count(); i++)
+				{
+					QWidget* toolWindow = widget(i);
+					if (qobject_cast<QToolWindowSingleTabAreaFrame*>(toolWindow) == m_pTabFrame)
+					{
+						toolWindow = m_pTabFrame->contents();
+					}
+					toolWindows << toolWindow;
+				}
+				m_areaDragCanStart = false;
+				m_manager->startDrag(toolWindows, this);
+				releaseMouse();
+			}
+		}
+	}
+
+	return QTabWidget::event(event);
 }
 
 QVariantMap QToolWindowArea::saveState()
@@ -315,14 +378,14 @@ QVariantMap QToolWindowArea::saveState()
 	return result;
 }
 
-void QToolWindowArea::restoreState(const QVariantMap &data, int stateFormat) 
+void QToolWindowArea::restoreState(const QVariantMap& data, int stateFormat)
 {
 	foreach(QVariant objectNameValue, data["objectNames"].toList())
 	{
 		QString objectName = objectNameValue.toString();
 		if (objectName.isEmpty()) { continue; }
 		bool found = false;
-		foreach(QWidget* toolWindow, m_manager->toolWindows())
+		foreach(QWidget * toolWindow, m_manager->toolWindows())
 		{
 			if (toolWindow->objectName() == objectName)
 			{
@@ -362,7 +425,7 @@ bool QToolWindowArea::shouldShowSingleTabFrame()
 	return true;
 }
 
-void QToolWindowArea::mouseReleaseEvent(QMouseEvent * e)
+void QToolWindowArea::mouseReleaseEvent(QMouseEvent* e)
 {
 	if (m_manager->config().value(QTWM_SUPPORT_SIMPLE_TOOLS, false).toBool())
 	{
@@ -382,7 +445,7 @@ void QToolWindowArea::mouseReleaseEvent(QMouseEvent * e)
 			}
 		}
 	}
-	
+
 	QTabWidget::mouseReleaseEvent(e);
 }
 
@@ -393,40 +456,36 @@ void QToolWindowArea::adjustDragVisuals()
 		tabBar()->setAutoHide(true);
 		bool showTabFrame = shouldShowSingleTabFrame();
 
-		if (showTabFrame && indexOf(m_tabFrame) == -1)
+		if (showTabFrame && indexOf(m_pTabFrame) == -1)
 		{
 			// Enable the single tab frame
 			QWidget* w = widget(0);
 			removeToolWindow(w);
-			m_tabFrame->setContents(w);
-			addToolWindow(m_tabFrame);
+			m_pTabFrame->setContents(w);
+			addToolWindow(m_pTabFrame);
 		}
-		else if (!showTabFrame && indexOf(m_tabFrame) != -1)
+		else if (!showTabFrame && indexOf(m_pTabFrame) != -1)
 		{
 			// Show the multiple tabs
-			QWidget* w = m_tabFrame->contents();
-			m_tabFrame->setContents(nullptr);
-			addToolWindow(w, indexOf(m_tabFrame));
-			removeToolWindow(m_tabFrame);
+			QWidget* w = m_pTabFrame->contents();
+			m_pTabFrame->setContents(nullptr);
+			addToolWindow(w, indexOf(m_pTabFrame));
+			removeToolWindow(m_pTabFrame);
 		}
 	}
 
-	if (m_manager->isMainWrapper(parentWidget()) || count() == 1)
-	{
-		cornerWidget()->hide();
-	}
-	else
+	if (!m_manager->isMainWrapper(parentWidget()) && count() > 1 && m_manager->config().value(QTWM_AREA_SHOW_DRAG_HANDLE, false).toBool())
 	{
 		cornerWidget()->show();
 	}
 
 	const bool bMainWidget = m_manager->isMainWrapper(parentWidget());
-	if (m_manager->config().value(QTWM_SINGLE_TAB_FRAME, true).toBool() && count() == 1)
+	if (m_manager->config().value(QTWM_SINGLE_TAB_FRAME, true).toBool() && count() == 1 && m_manager->config().value(QTWM_AREA_TABS_CLOSABLE, false).toBool())
 	{
 		// Instead of multiple tabs, the single tab frame is visible. So we need to toggle the visibility
 		// of its close button. The close button is hidden, when the tab frame is the only widget in
 		// its tool window wrapper.
-		m_tabFrame->setCloseButtonVisible(!bMainWidget);
+		m_pTabFrame->setCloseButtonVisible(!bMainWidget);
 	}
 	else if (bMainWidget && count() == 1)
 	{
@@ -481,18 +540,18 @@ bool QToolWindowArea::switchAutoHide(bool newValue)
 
 int QToolWindowArea::indexOf(QWidget* w) const
 {
-	if (w == m_tabFrame->contents())
+	if (w == m_pTabFrame->contents())
 	{
-		w = m_tabFrame;
+		w = m_pTabFrame;
 	}
 	return QTabWidget::indexOf(w);
 }
 
 void QToolWindowArea::setCurrentWidget(QWidget* w)
 {
-	if (w == m_tabFrame->contents())
+	if (w == m_pTabFrame->contents())
 	{
-		QTabWidget::setCurrentWidget(m_tabFrame);
+		QTabWidget::setCurrentWidget(m_pTabFrame);
 	}
 	else
 	{
@@ -502,8 +561,8 @@ void QToolWindowArea::setCurrentWidget(QWidget* w)
 
 QRect QToolWindowArea::combineAreaRect() const
 {
-	if (widget(0) == m_tabFrame)
-		return m_tabFrame->m_caption->rect();
+	if (widget(0) == m_pTabFrame)
+		return m_pTabFrame->m_pCaption->rect();
 	switch (tabPosition())
 	{
 	case QTabWidget::West:
@@ -513,22 +572,33 @@ QRect QToolWindowArea::combineAreaRect() const
 	case QTabWidget::South:
 	default:
 		return QRect(0, 0, width(), tabBar()->height());
-	}	
+	}
 }
 
-void QToolWindowArea::showContextMenu(const QPoint &point)
+void QToolWindowArea::showContextMenu(const QPoint& point)
 {
-	if (point.isNull())
+	//If this is the only window on the main wrapper (or the last tab) we need to keep it there
+	if (point.isNull() || (m_manager->isMainWrapper(parentWidget()) && (tabBar()->count() <= 1)))
 		return;
+
+	QToolWindowSingleTabAreaFrame* singleTabFrame = qobject_cast<QToolWindowSingleTabAreaFrame*>(currentWidget());
+
+	//Check if the tab frame is the only widget in its tool window wrapper and don't show the context menu in that case
+	if (singleTabFrame && singleTabFrame->m_pCaption && singleTabFrame->m_pCaption->contentsRect().contains(point) && !m_manager->isMainWrapper(parentWidget()))
+	{
+		QMenu menu(this);
+		connect(menu.addAction(tr("Close")), &QAction::triggered, [this, singleTabFrame]() { singleTabFrame->close(); });
+
+		menu.exec(mapToGlobal(QPoint(point.x(), point.y())));
+		return;
+	}
 
 	int tabIndex = tabBar()->tabAt(point);
 	if (tabIndex >= 0)
 	{
-#if QT_VERSION <= 0x050000
-		CALL_PROTECTED_VOID_METHOD_1ARG(QWidget, widget(tabIndex), customContextMenuRequested, QPoint, tabBar()->mapToGlobal(point));
-#else
-		widget(tabIndex)->customContextMenuRequested(tabBar()->mapToGlobal(point));
-		#endif
+		QMenu menu(this);
+		connect(menu.addAction(tr("Close")), &QAction::triggered, [this, tabIndex]() { closeTab(tabIndex); });
+		menu.exec(mapToGlobal(QPoint(point.x(), point.y())));
 	}
 }
 
@@ -539,18 +609,19 @@ void QToolWindowArea::swapToRollup()
 
 QToolWindowSingleTabAreaFrame::QToolWindowSingleTabAreaFrame(QToolWindowManager* manager, QWidget* parent)
 	: QFrame(parent)
-	, m_layout (new QGridLayout(this))
-	, m_manager (manager)
-	, m_closeButton (nullptr)
-	, m_caption (new QLabel(this))
-	, m_contents (nullptr)
-{	
-	m_layout->setContentsMargins(0, 0, 0, 0);
-	m_layout->setSpacing(0);
-	
-	m_caption->setAttribute(Qt::WA_TransparentForMouseEvents);
-	m_caption->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-	m_layout->addWidget(m_caption, 0, 0);
+	, m_pLayout(new QGridLayout(this))
+	, m_manager(manager)
+	, m_closeButton(nullptr)
+	, m_pCaption(new QLabel(this))
+	, m_pContents(nullptr)
+{
+	m_pLayout->setContentsMargins(0, 0, 0, 0);
+	m_pLayout->setMargin(0);
+	m_pLayout->setSpacing(0);
+
+	m_pCaption->setAttribute(Qt::WA_TransparentForMouseEvents);
+	m_pCaption->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	m_pLayout->addWidget(m_pCaption, 0, 0);
 	if (m_manager->config().value(QTWM_AREA_TABS_CLOSABLE, false).toBool())
 	{
 		m_closeButton = new QPushButton(this);
@@ -558,13 +629,15 @@ QToolWindowSingleTabAreaFrame::QToolWindowSingleTabAreaFrame(QToolWindowManager*
 		m_closeButton->setFocusPolicy(Qt::NoFocus);
 		m_closeButton->setIcon(getCloseButtonIcon());
 		connect(m_closeButton, SIGNAL(clicked()), this, SLOT(closeWidget()));
-#if QT_VERSION >= 0x050000 // Qt 4 does not have signals for icon and title changes, so need to use the events.
-		connect(this, SIGNAL(windowTitleChanged(const QString &)), m_caption, SLOT(setText(const QString &)));
-#endif
-		m_layout->addWidget(m_closeButton, 0, 1);
+		m_pLayout->addWidget(m_closeButton, 0, 2);
 	}
-	m_layout->setColumnStretch(0, 1);
-	m_layout->setRowStretch(1, 1);
+	else
+	{
+		m_pLayout->addItem(new QSpacerItem(0, 23, QSizePolicy::Minimum, QSizePolicy::Expanding), 0, 1);
+	}
+	connect(this, SIGNAL(windowTitleChanged(const QString&)), m_pCaption, SLOT(setText(const QString&)));
+	m_pLayout->setColumnStretch(0, 1);
+	m_pLayout->setRowStretch(1, 1);
 }
 
 QIcon QToolWindowSingleTabAreaFrame::getCloseButtonIcon() const
@@ -572,21 +645,23 @@ QIcon QToolWindowSingleTabAreaFrame::getCloseButtonIcon() const
 	return getIcon(m_manager->config(), QTWM_SINGLE_TAB_FRAME_CLOSE_ICON, QIcon(":/QtDockLibrary/gfx/close.png"));
 }
 
-void QToolWindowSingleTabAreaFrame::setContents(QWidget* w)
+void QToolWindowSingleTabAreaFrame::setContents(QWidget* widget)
 {
-	if (m_contents)
+	if (m_pContents)
 	{
-		m_layout->removeWidget(m_contents);
+		m_pLayout->removeWidget(m_pContents);
 	}
-	if (w)
+	if (widget)
 	{
-		m_layout->addWidget(w, 1, 0, 1, 2);
-		w->show();
-		setObjectName(w->objectName());
-		setWindowIcon(w->windowIcon());
-		setWindowTitle(w->windowTitle());
+		m_pLayout->addWidget(widget, 1, 0, 1, 2);
+		widget->show();
+		setObjectName(widget->objectName());
+		setWindowIcon(widget->windowIcon());
+		setWindowTitle(widget->windowTitle());
+		QObject::connect(widget, &QWidget::windowTitleChanged, this, &QWidget::setWindowTitle);
+		QObject::connect(widget, &QWidget::windowIconChanged, this, &QWidget::setWindowIcon);
 	}
-	m_contents = w;
+	m_pContents = widget;
 }
 
 void QToolWindowSingleTabAreaFrame::setCloseButtonVisible(bool bVisible)
@@ -610,23 +685,17 @@ void QToolWindowSingleTabAreaFrame::setCloseButtonVisible(bool bVisible)
 
 void QToolWindowSingleTabAreaFrame::closeWidget()
 {
-	m_manager->releaseToolWindow(m_contents, true);
+	m_manager->releaseToolWindow(m_pContents, true);
 }
 
 void QToolWindowSingleTabAreaFrame::closeEvent(QCloseEvent* e)
 {
-	if (m_contents)
+	if (m_pContents)
 	{
-		e->setAccepted(m_contents->close());
+		e->setAccepted(m_pContents->close());
+		if (e->isAccepted())
+		{
+			closeWidget();
+		}
 	}
-}
-
-void QToolWindowSingleTabAreaFrame::changeEvent(QEvent *ev)
-{
-#if QT_VERSION < 0x050000 // Qt 4 does not have signals for icon and title changes, so need to use the events.
-	if (ev->type() == QEvent::WindowTitleChange)
-	{
-		m_caption->setText(windowTitle());
-	}
-#endif
 }

@@ -1,18 +1,17 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PreviewWidget.h"
 
 #include <QBoxLayout>
 #include <QVBoxLayout>
-#include <QParentWndWidget.h>
 #include <QPushButton>
 #include <QSplitter>
 #include <QViewport.h>
 #include <QViewportConsumer.h>
 #include <CryEntitySystem/IEntitySystem.h>
 #include <CrySerialization/IArchiveHost.h>
-#include <QAdvancedPropertyTree.h>
+#include <QAdvancedPropertyTreeLegacy.h>
 
 #include "Objects/DisplayContext.h"
 #include "QViewportEvents.h"
@@ -26,7 +25,7 @@ CPreviewSettingsWidget::CPreviewSettingsWidget(CPreviewWidget& previewWidget)
 {
 	QVBoxLayout* pLayout = new QVBoxLayout(this);
 
-	m_pPropertyTree = new QAdvancedPropertyTree("Preview Settings");
+	m_pPropertyTree = new QAdvancedPropertyTreeLegacy("Preview Settings");
 	m_pPropertyTree->setExpandLevels(4);
 	m_pPropertyTree->setValueColumnWidth(0.6f);
 	m_pPropertyTree->setAutoRevert(false);
@@ -78,8 +77,12 @@ void CGizmoTranslateOp::OnRelease()
 CPreviewWidget::CPreviewWidget(QWidget* pParent)
 	: QWidget(pParent)
 {
+	IRenderer::SGraphicsPipelineDescription graphicsPipelineDesc;
+	graphicsPipelineDesc.type = EGraphicsPipelineType::Minimum;
+	graphicsPipelineDesc.shaderFlags = SHDF_SECONDARY_VIEWPORT | SHDF_ALLOWHDR | SHDF_FORWARD_MINIMAL;
+
 	m_pMainLayout = new QBoxLayout(QBoxLayout::TopToBottom);
-	m_pViewport = new QViewport(gEnv, this);
+	m_pViewport = new QViewport(gEnv, graphicsPipelineDesc, this);
 
 	m_viewportSettings.rendering.fps = false;
 	m_viewportSettings.grid.showGrid = true;
@@ -200,7 +203,7 @@ void CPreviewWidget::SetComponentInstance(const IScriptComponentInstance* pCompo
 
 			auto onBeginDrag = [this](IDisplayViewport*, ITransformManipulator*, const Vec2i&, int)
 			{
-				if (GetIEditor()->GetEditMode() == eEditModeMove)
+				if (GetIEditor()->GetLevelEditorSharedState()->GetEditMode() == CLevelEditorSharedState::EditMode::Move)
 				{
 					IScriptComponentInstance* pComponentInstance = DynamicCast<IScriptComponentInstance>(gEnv->pSchematyc->GetScriptRegistry().GetElement(m_componentInstanceGUID));
 					if (pComponentInstance)
@@ -217,11 +220,11 @@ void CPreviewWidget::SetComponentInstance(const IScriptComponentInstance* pCompo
 			};
 			m_pGizmo->signalBeginDrag.Connect(onBeginDrag);
 
-			auto onDrag = [this](IDisplayViewport*, ITransformManipulator*, const Vec2i&, const Vec3& offset, int)
+			auto onDrag = [this](IDisplayViewport*, ITransformManipulator*, const SDragData& dragData)
 			{
 				if (m_pGizmoTransformOp)
 				{
-					m_pGizmoTransformOp->OnMove(offset);
+					m_pGizmoTransformOp->OnMove(dragData.accumulateDelta);
 				}
 			};
 			m_pGizmo->signalDragging.Connect(onDrag);
@@ -302,7 +305,7 @@ void CPreviewWidget::Serialize(Serialization::IArchive& archive)
 	}
 }
 
-bool CPreviewWidget::GetManipulatorMatrix(RefCoordSys coordSys, Matrix34& tm)
+bool CPreviewWidget::GetManipulatorMatrix(Matrix34& tm)
 {
 	return false;
 }

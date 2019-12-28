@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -7,6 +7,7 @@
 #include "Expected.h"
 #include <IEditor.h>
 #include <CryAnimation/ICryAnimation.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <QDoubleSpinBox>
 #include <QBoxLayout>
 #include <QToolBar>
@@ -35,7 +36,7 @@ BlendSpacePreview::BlendSpacePreview(QWidget* parent, CharacterDocument* documen
 	toolbar->setIconSize(QSize(16, 16));
 	toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 	{
-		m_actionShowGrid = toolbar->addAction(CryIcon("icons:Animation/Grid.ico"), "Show Grid");
+		m_actionShowGrid = toolbar->addAction(CryIcon("icons:common/animation_grid.ico"), "Show Grid");
 		m_actionShowGrid->setCheckable(true);
 		m_actionShowGrid->setChecked(true);
 		EXPECTED(connect(toolbar->addAction("Reset View"), SIGNAL(triggered()), this, SLOT(OnResetView())));
@@ -54,7 +55,12 @@ BlendSpacePreview::BlendSpacePreview(QWidget* parent, CharacterDocument* documen
 		m_layout->addWidget(toolbar, 0);
 	}
 	m_layout->setContentsMargins(0, 0, 0, 0);
-	m_viewport = new QViewport(gEnv, this);
+
+	IRenderer::SGraphicsPipelineDescription graphicsPipelineDesc;
+	graphicsPipelineDesc.type = EGraphicsPipelineType::Minimum;
+	graphicsPipelineDesc.shaderFlags = SHDF_SECONDARY_VIEWPORT | SHDF_ALLOWHDR | SHDF_FORWARD_MINIMAL;
+
+	m_viewport = new QViewport(gEnv, graphicsPipelineDesc, this);
 	SViewportSettings settings = m_viewport->GetSettings();
 	settings.grid.showGrid = false;
 	m_viewport->SetSettings(settings);

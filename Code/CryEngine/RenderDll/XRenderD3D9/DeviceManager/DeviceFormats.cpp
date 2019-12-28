@@ -1,16 +1,14 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DeviceFormats.h"
 
 #include <CryRenderer/ITexture.h> // ETEX_Format
 
-#include "DriverD3D.h"
 
 bool SPixFormat::CheckSupport(D3DFormat Format, const char* szDescr)
 {
 	bool bRes = false;
-	CD3D9Renderer* rd = gcpRendD3D;
 
 	Init();
 	if ((Options = GetDeviceObjectFactory().QueryFormatSupport(Format)) & (FMTSUPPORT_TEXTURE2D | FMTSUPPORT_TEXTURECUBE))
@@ -69,14 +67,15 @@ bool SPixFormat::CheckSupport(D3DFormat Format, const char* szDescr)
 		else
 			iLog->Log("  %s", szDescr);
 
-		Next = rd->m_hwTexFormatSupport.m_FirstPixelFormat;
-		rd->m_hwTexFormatSupport.m_FirstPixelFormat = this;
+		Next = CRendererResources::s_hwTexFormatSupport.m_FirstPixelFormat;
+		CRendererResources::s_hwTexFormatSupport.m_FirstPixelFormat = this;
 
 		bRes = true;
 	}
 
 	return bRes;
 }
+
 void SPixFormatSupport::CheckFormatSupport()
 {
 	iLog->Log("Using pixel texture formats:");
@@ -122,7 +121,10 @@ void SPixFormatSupport::CheckFormatSupport()
 	// Depth/Stencil formats
 	m_FormatD32FS8.CheckSupport(DXGI_FORMAT_R32G8X24_TYPELESS, "D32FS8 (R32G8T)");
 	m_FormatD32F.CheckSupport(DXGI_FORMAT_R32_TYPELESS, "D32F (R32T)");
+#if !CRY_PLATFORM_DURANGO
 	m_FormatD24S8.CheckSupport(DXGI_FORMAT_R24G8_TYPELESS, "D24S8 (R24G8T)");
+#endif
+
 #if CRY_RENDERER_VULKAN
 	m_FormatD24.CheckSupport(DXGI_FORMAT_R24X8_TYPELESS, "D24 (R24T)");
 	m_FormatD16S8.CheckSupport(DXGI_FORMAT_R16G8X8_TYPELESS, "D16S8 (R16G8T)");
@@ -148,7 +150,7 @@ void SPixFormatSupport::CheckFormatSupport()
 	m_FormatB8G8R8A8.CheckSupport(DXGI_FORMAT_B8G8R8A8_UNORM, "B8G8R8A8");
 	m_FormatB8G8R8X8.CheckSupport(DXGI_FORMAT_B8G8R8X8_UNORM, "B8G8R8X8");
 
-#if CRY_RENDERER_VULKAN || CRY_RENDERER_OPENGL
+#if CRY_RENDERER_VULKAN
 	m_FormatEAC_R11.CheckSupport(DXGI_FORMAT_EAC_R11_UNORM, "EAC_R11");
 	m_FormatEAC_R11S.CheckSupport(DXGI_FORMAT_EAC_R11_SNORM, "EAC_R11S");
 	m_FormatEAC_RG11.CheckSupport(DXGI_FORMAT_EAC_RG11_UNORM, "EAC_RG11");
@@ -158,13 +160,21 @@ void SPixFormatSupport::CheckFormatSupport()
 
 	m_FormatASTC_LDR.CheckSupport(DXGI_FORMAT_ASTC_4x4_UNORM, "ASTC_LDR");
 //	m_FormatASTC_HDR.CheckSupport(DXGI_FORMAT_ASTC_4x4_UINT, "ASTC_HDR");
-#endif //CRY_RENDERER_OPENGL
+#endif //CRY_RENDERER_VULKAN
+
+	// Pre-calculate all possible queries
+	for (ETEX_Format eQueryable = eTF_Unknown; eQueryable != eTF_MaxFormat; eQueryable = ETEX_Format(eQueryable + 1))
+		m_FormatSupportedCache[eQueryable] = _IsFormatSupported(eQueryable);
+	for (ETEX_Format eQueryable = eTF_Unknown; eQueryable != eTF_MaxFormat; eQueryable = ETEX_Format(eQueryable + 1))
+		m_FormatClosestCacheEnm[eQueryable] = _GetClosestFormatSupported(eQueryable, m_FormatClosestCachePtr[eQueryable]);
+	for (ETEX_Format eQueryable = eTF_Unknown; eQueryable != eTF_MaxFormat; eQueryable = ETEX_Format(eQueryable + 1))
+		m_FormatLessPreciseCache[eQueryable] = _GetLessPreciseFormatSupported(eQueryable);
 }
 
-bool SPixFormatSupport::IsFormatSupported(ETEX_Format eTFDst)
+bool SPixFormatSupport::_IsFormatSupported(ETEX_Format eTFDst)
 {
 	D3DFormat D3DFmt = DeviceFormats::ConvertFromTexFormat(eTFDst);
-	if (!D3DFmt)
+	if (!D3DFmt || (D3DFmt == DXGI_FORMAT_UNKNOWN))
 		return false;
 
 	for (SPixFormat* pFmt = m_FirstPixelFormat; pFmt; pFmt = pFmt->Next)
@@ -174,7 +184,7 @@ bool SPixFormatSupport::IsFormatSupported(ETEX_Format eTFDst)
 	return false;
 }
 
-ETEX_Format SPixFormatSupport::GetLessPreciseFormatSupported(ETEX_Format eTFDst)
+ETEX_Format SPixFormatSupport::_GetLessPreciseFormatSupported(ETEX_Format eTFDst)
 {
 	switch (eTFDst)
 	{
@@ -188,7 +198,7 @@ ETEX_Format SPixFormatSupport::GetLessPreciseFormatSupported(ETEX_Format eTFDst)
 		if (m_FormatR16F.IsValid())
 			return eTF_R16F;
 
-		return eTF_Unknown;
+		break;
 
 	case eTF_R16G16:
 		if (m_FormatR16G16.IsValid())
@@ -200,7 +210,7 @@ ETEX_Format SPixFormatSupport::GetLessPreciseFormatSupported(ETEX_Format eTFDst)
 		if (m_FormatR16G16F.IsValid())
 			return eTF_R16G16F;
 
-		return eTF_Unknown;
+		break;
 
 	case eTF_R16G16B16A16:
 		if (m_FormatR16G16B16A16.IsValid())
@@ -212,16 +222,19 @@ ETEX_Format SPixFormatSupport::GetLessPreciseFormatSupported(ETEX_Format eTFDst)
 		if (m_FormatR16G16B16A16F.IsValid())
 			return eTF_R16G16B16A16F;
 
-		return eTF_Unknown;
+		break;
 
 	default:
-		assert(0);
+		if (IsFormatSupported(eTFDst))
+			return eTFDst;
+
+		break;
 	}
 
 	return eTF_Unknown;
 }
 
-ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, const SPixFormat*& pPF)
+ETEX_Format SPixFormatSupport::_GetClosestFormatSupported(ETEX_Format eTFDst, const SPixFormat*& pPF)
 {
 	switch (eTFDst)
 	{
@@ -248,7 +261,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 #endif
 
 	case eTF_B5G6R5:
@@ -268,7 +281,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatB8G8R8A8;
 			return eTF_B8G8R8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_B5G5R5A1:
 		if (m_FormatB5G5R5.IsValid())
@@ -281,7 +294,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatB8G8R8A8;
 			return eTF_B8G8R8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_B4G4R4A4:
 		if (m_FormatB4G4R4A4.IsValid())
@@ -295,7 +308,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatB8G8R8A8;
 			return eTF_B8G8R8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_A8:
 		if (m_FormatA8.IsValid())
@@ -303,7 +316,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatA8;
 			return eTF_A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R1:
 		if (m_FormatR1.IsValid())
@@ -311,7 +324,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR1;
 			return eTF_R1;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R8:
 		if (m_FormatR8.IsValid())
@@ -331,7 +344,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R8S:
 		if (m_FormatR8S.IsValid())
@@ -351,7 +364,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8S;
 			return eTF_R8G8B8A8S;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R16:
 		if (m_FormatR16.IsValid())
@@ -371,7 +384,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR16G16B16A16;
 			return eTF_R16G16B16A16;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R16S:
 		if (m_FormatR16S.IsValid())
@@ -391,7 +404,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR16G16B16A16S;
 			return eTF_R16G16B16A16S;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R16F:
 		if (m_FormatR16F.IsValid())
@@ -411,7 +424,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR16G16B16A16F;
 			return eTF_R16G16B16A16F;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R32F:
 		if (m_FormatR32F.IsValid())
@@ -431,7 +444,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR32G32B32A32F;
 			return eTF_R32G32B32A32F;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R11G11B10F:
 		if (m_FormatR11G11B10F.IsValid())
@@ -439,7 +452,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR11G11B10F;
 			return eTF_R11G11B10F;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R10G10B10A2:
 		if (m_FormatR10G10B10A2.IsValid())
@@ -447,7 +460,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR10G10B10A2;
 			return eTF_R10G10B10A2;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC1:
 		if (m_FormatBC1.IsValid())
@@ -460,7 +473,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC2:
 		if (m_FormatBC2.IsValid())
@@ -473,7 +486,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC3:
 		if (m_FormatBC3.IsValid())
@@ -486,7 +499,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC4U:
 		if (m_FormatBC4U.IsValid())
@@ -499,7 +512,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8;
 			return eTF_R8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC4S:
 		if (m_FormatBC4S.IsValid())
@@ -512,7 +525,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8S;
 			return eTF_R8S;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC5U:
 		if (m_FormatBC5U.IsValid())
@@ -525,7 +538,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8;
 			return eTF_R8G8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC5S:
 		if (m_FormatBC5S.IsValid())
@@ -538,7 +551,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8S;
 			return eTF_R8G8S;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC6UH:
 		if (m_FormatBC6UH.IsValid())
@@ -551,7 +564,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR16G16B16A16F;
 			return eTF_R16G16B16A16F;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC6SH:
 		if (m_FormatBC6SH.IsValid())
@@ -564,7 +577,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR16G16B16A16F;
 			return eTF_R16G16B16A16F;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_BC7:
 		if (m_FormatBC7.IsValid())
@@ -577,7 +590,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_R9G9B9E5:
 		if (m_FormatR9G9B9E5.IsValid())
@@ -590,7 +603,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR16G16B16A16F;
 			return eTF_R16G16B16A16F;
 		}
-		return eTF_Unknown;
+		break;
 
 #if CRY_RENDERER_VULKAN || CRY_RENDERER_GNM
 	case eTF_S8:
@@ -621,7 +634,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatD32FS8;
 			return eTF_D32FS8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_D16:
 		if (m_FormatD16.IsValid(FMTSUPPORT_DEPTH_STENCIL))
@@ -660,9 +673,9 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatD32FS8;
 			return eTF_D32FS8;
 		}
-		return eTF_Unknown;
+		break;
 
-#if CRY_RENDERER_VULKAN || CRY_RENDERER_OPENGL
+#if CRY_RENDERER_VULKAN
 	case eTF_EAC_R11:
 		if (m_FormatEAC_R11.IsValid())
 		{
@@ -674,7 +687,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8;
 			return eTF_R8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_EAC_R11S:
 		if (m_FormatEAC_R11S.IsValid())
@@ -687,7 +700,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8S;
 			return eTF_R8S;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_EAC_RG11:
 		if (m_FormatEAC_RG11.IsValid())
@@ -700,7 +713,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8;
 			return eTF_R8G8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_EAC_RG11S:
 		if (m_FormatEAC_RG11S.IsValid())
@@ -713,7 +726,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8S;
 			return eTF_R8G8S;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_ETC2:
 		if (m_FormatETC2.IsValid())
@@ -726,7 +739,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_ETC2A:
 		if (m_FormatETC2A.IsValid())
@@ -739,7 +752,7 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 
 	case eTF_ASTC_LDR_4x4:
 		if (m_FormatASTC_LDR.IsValid())
@@ -752,12 +765,15 @@ ETEX_Format SPixFormatSupport::GetClosestFormatSupported(ETEX_Format eTFDst, con
 			pPF = &m_FormatR8G8B8A8;
 			return eTF_R8G8B8A8;
 		}
-		return eTF_Unknown;
+		break;
 #endif
 
 	default:
-		assert(0);
+		pPF = nullptr;
+		return eTF_Unknown;
 	}
+
+	pPF = nullptr;
 	return eTF_Unknown;
 }
 
@@ -885,14 +901,14 @@ bool DeviceFormats::IsSRGBReadable(D3DFormat nFormat)
 	case DXGI_FORMAT_BC7_UNORM:
 		return true;
 
-#if CRY_RENDERER_VULKAN || (CRY_RENDERER_OPENGL >= 430)
+#if CRY_RENDERER_VULKAN
 	case DXGI_FORMAT_ETC2_UNORM:
 		return true;
 	case DXGI_FORMAT_ETC2A_UNORM:
 		return true;
 	case DXGI_FORMAT_ASTC_4x4_UNORM:
 		return true;
-#endif //CRY_RENDERER_OPENGL
+#endif //CRY_RENDERER_VULKAN
 
 	default:
 		break;
@@ -1009,9 +1025,6 @@ D3DFormat DeviceFormats::ConvertFromTexFormat(ETEX_Format eTF)
 		return DXGI_FORMAT_R4G4_UNORM;
 	case eTF_R4G4B4A4:
 		return DXGI_FORMAT_R4G4B4A4_UNORM;
-#endif
-#if CRY_RENDERER_VULKAN || CRY_RENDERER_OPENGL
-		// only available as hardware format under OpenGL/
 	case eTF_EAC_R11:
 		return DXGI_FORMAT_EAC_R11_UNORM;
 	case eTF_EAC_R11S:
@@ -1026,7 +1039,7 @@ D3DFormat DeviceFormats::ConvertFromTexFormat(ETEX_Format eTF)
 		return DXGI_FORMAT_ETC2A_UNORM;
 	case eTF_ASTC_LDR_4x4:
 		return DXGI_FORMAT_ASTC_4x4_UNORM;
-#endif //CRY_RENDERER_OPENGL
+#endif //CRY_RENDERER_VULKAN
 
 		// only available as hardware format under DX9
 	case eTF_A8L8:
@@ -1045,7 +1058,7 @@ D3DFormat DeviceFormats::ConvertFromTexFormat(ETEX_Format eTF)
 		return DXGI_FORMAT_B8G8R8A8_UNORM;
 
 	default:
-		assert(0);
+		return DXGI_FORMAT_UNKNOWN;
 	}
 
 	return DXGI_FORMAT_UNKNOWN;
@@ -1135,13 +1148,11 @@ uint32 DeviceFormats::GetWriteMask(ETEX_Format eTF)
 		return D3D11_COLOR_WRITE_ENABLE_ALL;
 
 #if CRY_RENDERER_VULKAN
+	// only available as hardware format under Vulkan
 	case eTF_R4G4:
 		return D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN;
 	case eTF_R4G4B4A4:
 		return D3D11_COLOR_WRITE_ENABLE_ALL;
-#endif
-#if CRY_RENDERER_VULKAN || CRY_RENDERER_OPENGL
-		// only available as hardware format under OpenGL
 	case eTF_EAC_R11:
 	case eTF_EAC_R11S:
 		return D3D11_COLOR_WRITE_ENABLE_RED;
@@ -1154,7 +1165,7 @@ uint32 DeviceFormats::GetWriteMask(ETEX_Format eTF)
 		return D3D11_COLOR_WRITE_ENABLE_ALL;
 	case eTF_ASTC_LDR_4x4:
 		return D3D11_COLOR_WRITE_ENABLE_ALL;
-#endif //CRY_RENDERER_OPENGL
+#endif //CRY_RENDERER_VULKAN
 
 		// only available as hardware format under DX9
 	case eTF_A8L8:
@@ -1348,9 +1359,6 @@ ETEX_Format DeviceFormats::ConvertToTexFormat(D3DFormat nFormat)
 		return eTF_R4G4;
 	case DXGI_FORMAT_R4G4B4A4_UNORM:
 		return eTF_R4G4B4A4;
-#endif
-#if CRY_RENDERER_VULKAN || CRY_RENDERER_OPENGL
-		// only available as hardware format under OpenGL
 	case DXGI_FORMAT_EAC_R11_UNORM:
 		return eTF_EAC_R11;
 	case DXGI_FORMAT_EAC_R11_SNORM:
@@ -1538,6 +1546,7 @@ D3DFormat DeviceFormats::ConvertToSRGB(D3DFormat nFormat)
 	case DXGI_FORMAT_R8G8B8A8_UNORM:
 		return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 	case DXGI_FORMAT_B8G8R8A8_UNORM:
+		return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
 	case DXGI_FORMAT_B8G8R8X8_UNORM:
 		return DXGI_FORMAT_B8G8R8X8_UNORM_SRGB;
 
@@ -1550,7 +1559,7 @@ D3DFormat DeviceFormats::ConvertToSRGB(D3DFormat nFormat)
 	case DXGI_FORMAT_BC7_UNORM:
 		return DXGI_FORMAT_BC7_UNORM_SRGB;
 
-#if CRY_RENDERER_VULKAN || CRY_RENDERER_OPENGL
+#if CRY_RENDERER_VULKAN
 	case DXGI_FORMAT_ETC2_UNORM:
 		return DXGI_FORMAT_ETC2_UNORM_SRGB;
 	case DXGI_FORMAT_ETC2A_UNORM:
@@ -1570,7 +1579,7 @@ D3DFormat DeviceFormats::ConvertToSRGB(D3DFormat nFormat)
 	case DXGI_FORMAT_BC2_UNORM_SRGB:
 	case DXGI_FORMAT_BC3_UNORM_SRGB:
 	case DXGI_FORMAT_BC7_UNORM_SRGB:
-#if CRY_RENDERER_VULKAN || CRY_RENDERER_OPENGL
+#if CRY_RENDERER_VULKAN
 	case DXGI_FORMAT_ETC2_UNORM_SRGB:
 	case DXGI_FORMAT_ETC2A_UNORM_SRGB:
 	case DXGI_FORMAT_ASTC_4x4_UNORM_SRGB:

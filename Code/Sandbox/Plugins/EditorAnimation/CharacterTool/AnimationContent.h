@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -44,7 +44,6 @@ struct AnimationContent
 	SAnimSettings          settings;
 	BlendSpace             blendSpace;
 	CombinedBlendSpace     combinedBlendSpace;
-	string                 newAnimationSkeleton;
 	std::vector<AnimEvent> events;
 
 	AnimationContent();

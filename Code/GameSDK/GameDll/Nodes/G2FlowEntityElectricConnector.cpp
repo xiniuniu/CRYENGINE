@@ -1,10 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
    $Id$
    $DateTime$
-   Description:  Flow nodes for working with XBox 360 controller
+   Description:  Flow nodes for working with Xbox 360 controller
    -------------------------------------------------------------------------
    History:
    - 31:3:2008        : Created by Kevin
@@ -190,7 +190,7 @@ public:
 			pEnt->AddEntityLink(tag, 0,CryGUID::Null());
 	}
 
-	void OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+	void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 	{
 		if (!m_pGraph->IsEnabled() || m_pGraph->IsSuspended() || !m_pGraph->IsActive())
 			return;

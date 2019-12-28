@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "FileUtil.h"
@@ -6,29 +6,57 @@
 #include "StringHelpers.h"
 
 #include <io.h>
+#include <CryString/CryPath.h>
+#include <thread>
 
-//////////////////////////////////////////////////////////////////////////
+namespace Private_FileUtil
+{
+
+string GetLastErrorString()
+{
+	const char szMsgBuf[1024] = "";
+
+	FormatMessageA(
+		FORMAT_MESSAGE_FROM_SYSTEM |
+		FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL,
+		GetLastError(),
+		0,
+		(LPSTR)&szMsgBuf,
+		1024,
+		NULL);
+
+	return string(szMsgBuf);
+}
+
+}
+
+
 // returns true if 'dir' is a subdirectory of 'baseDir' or same directory as 'baseDir' 
 // note: returns false in case of wrong names passed
 static bool IsSubdirOrSameDir( const char* dir, const char* baseDir )
 {
-	char szFullPathDir[2*1024];
-	if (!_fullpath(szFullPathDir, dir, sizeof(szFullPathDir)))
+	wstring wdir, wbasedir;
+	Unicode::Convert(wdir, dir);
+	Unicode::Convert(wbasedir, baseDir);
+
+	wchar_t szFullPathDir[2*1024];
+	if (!_wfullpath(szFullPathDir, wdir.c_str(), sizeof(szFullPathDir) / sizeof(wchar_t)))
 	{
 		return false;
 	}
 
-	char szFullPathBaseDir[2*1024];
-	if (!_fullpath(szFullPathBaseDir, baseDir, sizeof(szFullPathBaseDir)))
+	wchar_t szFullPathBaseDir[2*1024];
+	if (!_wfullpath(szFullPathBaseDir, wbasedir.c_str(), sizeof(szFullPathBaseDir) / sizeof(wchar_t)))
 	{
 		return false;
 	}
 
-	const char* p = szFullPathDir;
-	const char* q = szFullPathBaseDir;
+	const wchar_t* p = szFullPathDir;
+	const wchar_t* q = szFullPathBaseDir;
 	for(;;++p, ++q)
 	{
-		if (tolower(*p) == tolower(*q))
+		if (towlower(*p) == towlower(*q))
 		{
 			if (*p == 0)
 			{
@@ -60,29 +88,62 @@ static bool IsSubdirOrSameDir( const char* dir, const char* baseDir )
 	}
 }
 
+bool FileUtil::CopyFileAllowOverwrite(const string& existingFilename, const string& newFilename, string& errorString, int numberOfAdditionalAttempts /*= 0*/)
+{
+	wstring wideExistingFilename;
+	Unicode::Convert(wideExistingFilename, existingFilename);
 
-//////////////////////////////////////////////////////////////////////////
+	wstring wideNewFilename;
+	Unicode::Convert(wideNewFilename, newFilename);
+
+	for (int i = 0; i <= numberOfAdditionalAttempts; ++i)
+	{
+		FileUtil::MakeWritable(wideNewFilename.c_str());
+
+		if (::CopyFileW(wideExistingFilename.c_str(), wideNewFilename.c_str(), false) != 0)
+		{
+			return true;
+		}
+
+		if (!i)
+		{
+			errorString = Private_FileUtil::GetLastErrorString();
+		}
+
+		using namespace std::chrono_literals;
+		std::this_thread::sleep_for(300ms);
+	}
+
+	return false;
+}
+
 void FileUtil::FindFiles(
-	std::vector<wstring>& resultFiles,
+	std::vector<string>& resultFiles,
 	const int maxFileCount,
-	const wstring& root,
-	const wstring& path,
+	const string& root,
+	const string& path,
 	bool recursive,
-	const wstring& fileMask,
-	const std::vector<wstring>& dirsToIgnore)
+	const string& fileMask,
+	const std::vector<string>& dirsToIgnore)
 {
 	_wfinddata64_t c_file;
 	intptr_t hFile;
 
-	std::wstring fullPath = PathHelpers::Join(PathHelpers::Join(root, path), fileMask);
+	string fullPath = PathUtil::Make(PathUtil::Make(root, path), fileMask);
+	wstring wfullPath, wfileMask;
+	Unicode::Convert(wfullPath, fullPath);
+	Unicode::Convert(wfileMask, fileMask);
 
-	if ((hFile = _wfindfirst64(fullPath.c_str(), &c_file)) != -1L)
+	if ((hFile = _wfindfirst64(wfullPath.c_str(), &c_file)) != -1L)
 	{
 		do
 		{
-			if ((!(c_file.attrib & _A_SUBDIR)) && StringHelpers::MatchesWildcardsIgnoreCase(c_file.name, fileMask))
+			if ((!(c_file.attrib & _A_SUBDIR)) && StringHelpers::MatchesWildcardsIgnoreCase(c_file.name, wfileMask))
 			{
-				resultFiles.push_back(PathHelpers::Join(path, c_file.name));
+				string fileName;
+				Unicode::Convert(fileName, c_file.name);
+
+				resultFiles.push_back(PathUtil::Make(path, fileName));
 				if ((int)resultFiles.size() >= maxFileCount)
 				{
 					return;
@@ -96,17 +157,21 @@ void FileUtil::FindFiles(
 	// Scan directories.
 	if (recursive)
 	{
-		fullPath = PathHelpers::Join(PathHelpers::Join(root, path), L"*.*");
-		if ((hFile = _wfindfirst64(fullPath.c_str(), &c_file)) != -1L)
+		fullPath = PathUtil::Make(PathUtil::Make(root, path), string("*.*"));
+		Unicode::Convert(wfullPath, fullPath);
+		if ((hFile = _wfindfirst64(wfullPath.c_str(), &c_file)) != -1L)
 		{
 			do
 			{
 				if ((c_file.attrib & _A_SUBDIR) && !StringHelpers::Equals(c_file.name, L".") && !StringHelpers::Equals(c_file.name, L".."))
 				{
+					string fileName;
+					Unicode::Convert(fileName, c_file.name);
+
 					bool bSkip = false;
 					for (size_t i = 0; i < dirsToIgnore.size(); ++i)
 					{
-						if (StringHelpers::MatchesWildcardsIgnoreCase(c_file.name, dirsToIgnore[i]))
+						if (StringHelpers::MatchesWildcardsIgnoreCase(fileName, dirsToIgnore[i]))
 						{
 							bSkip = true;
 							break;
@@ -114,7 +179,7 @@ void FileUtil::FindFiles(
 					}
 					if (!bSkip)
 					{
-						FindFiles(resultFiles, maxFileCount, root, PathHelpers::Join(path, c_file.name), recursive, fileMask, dirsToIgnore);
+						FindFiles(resultFiles, maxFileCount, root, PathUtil::Make(path, fileName), recursive, fileMask, dirsToIgnore);
 						if (resultFiles.size() >= maxFileCount)
 						{
 							return;
@@ -128,16 +193,15 @@ void FileUtil::FindFiles(
 	}
 }
 
-//////////////////////////////////////////////////////////////////////////
 // the paths must have trailing slash
 static bool ScanDirectoryRecursive( const string &root, const string &path, const string &file, std::vector<string> &files, bool recursive, const string &dirToIgnore )
 {
-	__finddata64_t c_file;
+	_wfinddata64_t c_file;
 	intptr_t hFile;
 
 	bool anyFound = false;
 
-	string fullPath = PathHelpers::Join(root, path);
+	string fullPath = PathUtil::Make(root, path);
 
 	if (!dirToIgnore.empty())
 	{
@@ -147,46 +211,59 @@ static bool ScanDirectoryRecursive( const string &root, const string &path, cons
 		}
 	}
 
-	fullPath = PathHelpers::Join(fullPath, file);
+	fullPath = PathUtil::Make(fullPath, file);
 
-	if ( (hFile = _findfirst64( fullPath.c_str(), &c_file )) != -1L )
+	wstring wfullpath, wfile;
+	Unicode::Convert(wfullpath, fullPath);
+	Unicode::Convert(wfile, file);
+
+	if ( (hFile = _wfindfirst64(wfullpath.c_str(), &c_file )) != -1L )
 	{
 		// Find the rest of the files.
 		do {
-			if ((!(c_file.attrib & _A_SUBDIR)) && StringHelpers::MatchesWildcardsIgnoreCase(c_file.name, file))
+			if ((!(c_file.attrib & _A_SUBDIR)) && StringHelpers::MatchesWildcardsIgnoreCase(c_file.name, wfile))
 			{
 				anyFound = true;
-				files.push_back( PathHelpers::Join(path, c_file.name) );
+
+				string fileName;
+				Unicode::Convert(fileName, c_file.name);
+
+				string foundFile = PathUtil::Make(path, fileName);
+
+				files.push_back(foundFile);
 			}
-		}	while (_findnext64( hFile, &c_file ) == 0);
+		}	while (_wfindnext64( hFile, &c_file ) == 0);
 		_findclose( hFile );
 	}
 
 	if (recursive)
 	{
-		fullPath = PathHelpers::Join(PathHelpers::Join(root, path), "*.*");
-		if( (hFile = _findfirst64( fullPath.c_str(), &c_file )) != -1L )
+		fullPath = PathUtil::Make(PathUtil::Make(root, path), string("*.*"));
+		Unicode::Convert(wfullpath, fullPath);
+
+		if( (hFile = _wfindfirst64(wfullpath.c_str(), &c_file )) != -1L )
 		{
 			// Find directories.
 			do {
 				if (c_file.attrib & _A_SUBDIR)
 				{
 					// If recursive.
-					if (strcmp(c_file.name, ".") && strcmp(c_file.name, ".."))
+					if (wcscmp(c_file.name, L".") && wcscmp(c_file.name, L".."))
 					{
-						if (ScanDirectoryRecursive( root,PathHelpers::Join(path, c_file.name),file,files,recursive,dirToIgnore ))
+						string fileName;
+						Unicode::Convert(fileName, c_file.name);
+
+						if (ScanDirectoryRecursive( root, PathUtil::Make(path, fileName),file,files,recursive,dirToIgnore ))
 							anyFound = true;
 					}
 				}
-			}	while (_findnext64( hFile, &c_file ) == 0);
+			}	while (_wfindnext64( hFile, &c_file ) == 0);
 			_findclose( hFile );
 		}
 	}
 
 	return anyFound;
 }
-
-//////////////////////////////////////////////////////////////////////////
 
 bool FileUtil::ScanDirectory(const string& path, const string& file, std::vector<string>& files, bool recursive, const string& dirToIgnore)
 {
@@ -206,8 +283,10 @@ bool FileUtil::EnsureDirectoryExists(const char* szPathIn)
 		return true;
 	}
 
-	std::vector<char> path(szPathIn, szPathIn + strlen(szPathIn) + 1);
-	char* p = &path[0];
+	wstring widePath;
+	Unicode::Convert(widePath, szPathIn);
+
+	wchar_t* p = const_cast<wchar_t*>(widePath.data());
 
 	// Skip '/' and '//' in the beginning
 	while (*p == '/' || *p == '\\')
@@ -221,9 +300,9 @@ bool FileUtil::EnsureDirectoryExists(const char* szPathIn)
 		{
 			++p;
 		}
-		const char saved = *p;
+		const wchar_t saved = *p;
 		*p = 0;
-		_mkdir(&path[0]);
+		_wmkdir(&widePath[0]);
 		*p++ = saved;
 		if (saved == 0)
 		{

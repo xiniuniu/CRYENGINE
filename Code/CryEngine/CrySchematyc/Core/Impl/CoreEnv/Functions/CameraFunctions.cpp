@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -9,7 +9,9 @@
 
 #include <CrySchematyc/CoreAPI.h>
 #include <CrySchematyc/Env/IEnvRegistrar.h>
+#include <CryPhysics/physinterface.h>
 #include "CoreEnv/CoreEnv.h"
+#include <CryCore/StaticInstanceList.h>
 
 static void ReflectType(Schematyc::CTypeDesc<CCamera>& desc)
 {
@@ -46,7 +48,8 @@ CryTransform::CTransform GetTransform(const CCamera& camera)
 Vec3 ScreenToWorld(const Vec2& screenSpaceCoordinates)
 {
 	Vec3 worldSpaceCoordinates;
-	gEnv->pRenderer->UnProjectFromScreen(screenSpaceCoordinates.x, gEnv->pRenderer->GetHeight() - screenSpaceCoordinates.y, 1, &worldSpaceCoordinates.x, &worldSpaceCoordinates.y, &worldSpaceCoordinates.z);
+	auto& camera = GetISystem()->GetViewCamera();
+	gEnv->pRenderer->UnProjectFromScreen(screenSpaceCoordinates.x, camera.GetViewSurfaceZ() - screenSpaceCoordinates.y, 1, &worldSpaceCoordinates.x, &worldSpaceCoordinates.y, &worldSpaceCoordinates.z);
 	return worldSpaceCoordinates;
 }
 
@@ -111,7 +114,8 @@ namespace Raycast
 
 	bool RayCastFromScreen(const Vec2& screenSpaceOrigin, const float maxDistance, Vec3& hitPt, Vec3& hitNormal, ExplicitEntityId& hitEntityId)
 	{
-		float invMouseY = gEnv->pRenderer->GetHeight() - screenSpaceOrigin.y;
+		auto& camera = GetISystem()->GetViewCamera();
+		float invMouseY = camera.GetViewSurfaceZ() - screenSpaceOrigin.y;
 
 		Vec3 vPos0(0, 0, 0);
 		gEnv->pRenderer->UnProjectFromScreen(screenSpaceOrigin.x, (float)invMouseY, 0, &vPos0.x, &vPos0.y, &vPos0.z);

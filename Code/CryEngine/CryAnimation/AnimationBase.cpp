@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "AnimationBase.h"
@@ -14,7 +14,7 @@
 #include <CrySystem/IEngineModule.h>
 
 //////////////////////////////////////////////////////////////////////////
-struct CSystemEventListner_Animation : public ISystemEventListener
+struct CSystemEventListener_Animation : public ISystemEventListener
 {
 public:
 	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam)
@@ -45,6 +45,7 @@ public:
 				{
 					g_pCharacterManager = new CharacterManager;
 					gEnv->pCharacterManager = g_pCharacterManager;
+					gEnv->pCharacterManager->PostInit();
 				}
 				AnimEventLoader::SetPreLoadParticleEffects(false);
 				break;
@@ -74,7 +75,7 @@ public:
 		}
 	}
 };
-static CSystemEventListner_Animation g_system_event_listener_anim;
+static CSystemEventListener_Animation g_system_event_listener_anim;
 
 //////////////////////////////////////////////////////////////////////////
 class CEngineModule_CryAnimation : public IAnimationEngineModule
@@ -109,7 +110,7 @@ class CEngineModule_CryAnimation : public IAnimationEngineModule
 		if (!g_controllerHeap.IsInitialised())
 			g_controllerHeap.Init(Console::GetInst().ca_MemoryDefragPoolSize);
 
-		pSystem->GetISystemEventDispatcher()->RegisterListener(&g_system_event_listener_anim, "CSystemEventListner_Animation");
+		pSystem->GetISystemEventDispatcher()->RegisterListener(&g_system_event_listener_anim, "CSystemEventListener_Animation");
 
 		g_pCharacterManager = NULL;
 		env.pCharacterManager = NULL;
@@ -162,7 +163,6 @@ ILINE void g_LogToFile(const char* szFormat, ...)
 }
 
 f32 g_fCurrTime = 0;
-bool g_bProfilerOn = false;
 
 AnimStatisticsInfo g_AnimStatisticsInfo;
 

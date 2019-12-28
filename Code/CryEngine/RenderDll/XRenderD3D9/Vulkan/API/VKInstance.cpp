@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "VKInstance.hpp"
@@ -9,7 +9,7 @@ namespace NCryVulkan
 {
 
 CInstance::CInstance()
-	: m_instanceHandle(VK_NULL_HANDLE)
+	: CInstanceHolder()
 	, m_debugLayerCallbackHandle(VK_NULL_HANDLE)
 {
 	
@@ -24,11 +24,6 @@ CInstance::~CInstance()
 		{
 			pDestroyCallback(m_instanceHandle, m_debugLayerCallbackHandle, nullptr);
 		}
-	}
-
-	if (m_instanceHandle != VK_NULL_HANDLE)
-	{
-		vkDestroyInstance(m_instanceHandle, NULL);
 	}
 }
 
@@ -50,6 +45,8 @@ bool CreateSDLWindowContext(SDL_Window*& kWindowContext, const char* szTitle, ui
 		uWindowFlags |= SDL_WINDOW_FULLSCREEN;
 #endif
 	}
+
+	uWindowFlags |= SDL_WINDOW_VULKAN;
 
 //	SDL_VideoInit("dummy");
 	kWindowContext = SDL_CreateWindow(szTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, uWidth, uHeight, uWindowFlags);
@@ -101,49 +98,65 @@ void CInstance::DestroySDLWindow(HWND kHandle)
 
 #endif //defined(USE_SDL2_VIDEO)
 
-_smart_ptr<CDevice> CInstance::CreateDevice(size_t physicalDeviceIndex, const SSurfaceCreationInfo& surfaceCreationInfo)
+_smart_ptr<CDevice> CInstance::CreateDevice(size_t physicalDeviceIndex)
 {
-	VkSurfaceKHR surface;
-	if (CreateSurface(surfaceCreationInfo, &surface) == VK_SUCCESS)
+	VK_ASSERT(physicalDeviceIndex < m_physicalDevices.size(), "Bad device index");
+	const SPhysicalDeviceInfo& pDeviceInfo = m_physicalDevices[physicalDeviceIndex];
+	VkAllocationCallbacks allocationCallbacks;
+	m_Allocator.GetCpuHeapCallbacks(allocationCallbacks);
+
+	// check for required device features
+	if (!ValidateDeviceFeatures(pDeviceInfo))
+		return nullptr;
+
+	// filter out extensions which are not available
+	std::vector<const char*> extensions;
+	for (const auto& requestedExtension : m_enabledPhysicalDeviceExtensions)
 	{
-		VK_ASSERT(physicalDeviceIndex < m_physicalDevices.size() && "Bad device index");
-		const SPhysicalDeviceInfo& pDeviceInfo = m_physicalDevices[physicalDeviceIndex];
-		VkAllocationCallbacks allocationCallbacks;
-		m_Allocator.GetCpuHeapCallbacks(allocationCallbacks);
+		bool found = false;
 
-		// filter out extensions which are not available
-		std::vector<const char*> extensions;
-		for (const auto& requestedExtension : m_enabledPhysicalDeviceExtensions)
+		for (int i = 0; i < pDeviceInfo.implicitExtensions.size(); ++i)
 		{
-			int i;
-			for (i=0; i < pDeviceInfo.implicitExtensions.size(); ++i)
-			{
-				const VkExtensionProperties& availableExtension = pDeviceInfo.implicitExtensions[i];
+			const VkExtensionProperties& availableExtension = pDeviceInfo.implicitExtensions[i];
 
-				if (strcmp(availableExtension.extensionName, requestedExtension.name) == 0)
-				{
-					extensions.push_back(requestedExtension.name);
-					break;
-				}
-			}
-
-			if (i == pDeviceInfo.implicitExtensions.size() && requestedExtension.bRequired)
+			if (strcmp(availableExtension.extensionName, requestedExtension.name) == 0)
 			{
-				VK_ERROR("Failed to load extension '%s'", requestedExtension.name);
-				return nullptr;
+				extensions.push_back(requestedExtension.name);
+				found = true;
+				break;
 			}
 		}
 
-		auto device = CDevice::Create(&pDeviceInfo, &allocationCallbacks, surface, m_enabledPhysicalDeviceLayers, extensions);
-		Extensions::Init(device.get(), extensions);
+		if (!found)
+		{
+			for (int l = 0; l < pDeviceInfo.devicelayers.size(); ++l)
+			{
+				for (const auto& e : pDeviceInfo.devicelayers[l].extensions)
+				{
+					if (strcmp(e.extensionName, requestedExtension.name) == 0)
+					{
+						extensions.push_back(e.extensionName);
+						found = true;
+						break;
+					}
+				}
 
-		return device;
+				if (found)
+					break;
+			}
+		}
+
+		if (!found && requestedExtension.bRequired)
+		{
+			VK_ERROR("Failed to load extension '%s'", requestedExtension.name);
+			return nullptr;
+		}
 	}
-	else
-	{
-		VK_ERROR("Failed to create KHR Surface");
-		return nullptr;
-	}
+
+	auto device = CDevice::Create(&pDeviceInfo, &allocationCallbacks, m_enabledPhysicalDeviceLayers, extensions);
+	Extensions::Init(device.get(), extensions);
+
+	return device;
 }
 
 VkResult CInstance::CreateSurface(const SSurfaceCreationInfo& info, VkSurfaceKHR* surface)
@@ -167,9 +180,23 @@ VkResult CInstance::CreateSurface(const SSurfaceCreationInfo& info, VkSurfaceKHR
 
 	return vkCreateAndroidSurfaceKHR(m_instanceHandle, &createInfo, NULL, surface);
 #elif defined(CRY_PLATFORM_LINUX)
-#error  "Not implemented!""
-#endif
+	VkXcbSurfaceCreateInfoKHR createInfo = {};
 
+	createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+	createInfo.pNext = NULL;
+	createInfo.flags = 0;
+	//createInfo.connection = NULL;		// TODO: find the connection
+	createInfo.window = info.window;
+
+	return vkCreateXcbSurfaceKHR(m_instanceHandle, &createInfo, NULL, surface);
+#else
+	#error  "Not implemented!"
+#endif
+}
+
+void CInstance::DestroySurface(VkSurfaceKHR surface)
+{
+	
 }
 
 bool CInstance::Initialize(const char* appName, uint32_t appVersion, const char* engineName, uint32_t engineVersion)
@@ -185,7 +212,7 @@ bool CInstance::Initialize(const char* appName, uint32_t appVersion, const char*
 
 	InitializeDebugLayerCallback();
 	InitializePhysicalDeviceInfos();
-	VK_ASSERT(m_physicalDevices.size() > 0);
+	VK_ASSERT(!m_physicalDevices.empty(), "");
 
 	GatherPhysicalDeviceLayersToEnable();
 	GatherPhysicalDeviceExtensionsToEnable();
@@ -282,7 +309,11 @@ VkResult CInstance::InitializeInstance(const char* appName, uint32_t appVersion,
 	applicationInfo.applicationVersion = appVersion;
 	applicationInfo.pEngineName = engineName;
 	applicationInfo.engineVersion = engineVersion;
+#if CRY_RENDERER_VULKAN >= 11
+	applicationInfo.apiVersion = VK_API_VERSION_1_1;
+#else
 	applicationInfo.apiVersion = VK_API_VERSION_1_0;
+#endif
 
 	VkInstanceCreateInfo instanceInfo = {};
 
@@ -309,7 +340,7 @@ VkResult CInstance::InitializeInstance(const char* appName, uint32_t appVersion,
 			CryLogAlways("vkCreateInstance: Discarded %" PRISIZE_T " layers during Vulkan initialization", m_enabledInstanceLayers.size());
 		}
 	}
-	VK_ASSERT(res == VK_SUCCESS);
+	VK_ASSERT(res == VK_SUCCESS, "");
 
 	return res;
 }
@@ -318,13 +349,13 @@ VkResult CInstance::InitializePhysicalDeviceInfos()
 {
 	uint32_t gpuCount(0);
 	VkResult res = vkEnumeratePhysicalDevices(m_instanceHandle, &gpuCount, NULL);
-	VK_ASSERT(gpuCount);
+	VK_ASSERT(gpuCount, "");
 
 	std::vector<VkPhysicalDevice> gpus;
 	gpus.resize(gpuCount);
 
 	res = vkEnumeratePhysicalDevices(m_instanceHandle, &gpuCount, gpus.data());
-	VK_ASSERT(res == VK_SUCCESS);
+	VK_ASSERT(res == VK_SUCCESS, "");
 
 	m_physicalDevices.resize(gpuCount);
 
@@ -458,7 +489,17 @@ void CInstance::GatherInstanceLayersToEnable()
 {
 	if (CRendererCVars::CV_r_EnableDebugLayer)
 	{
+#if   CRY_PLATFORM_WINDOWS || CRY_PLATFORM_LINUX
 		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_standard_validation");
+#elif CRY_PLATFORM_ANDROID
+		m_enabledInstanceLayers.push_back("VK_LAYER_GOOGLE_threading");
+		m_enabledInstanceLayers.push_back("VK_LAYER_GOOGLE_unique_objects");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_parameter_validation");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_object_tracker");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_core_validation");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_swapchain");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_image");
+#endif
 	}
 }
 
@@ -486,7 +527,17 @@ void CInstance::GatherPhysicalDeviceLayersToEnable()
 {
 	if (CRendererCVars::CV_r_EnableDebugLayer)
 	{
-		m_enabledPhysicalDeviceLayers.push_back("VK_LAYER_LUNARG_standard_validation");
+#if   CRY_PLATFORM_WINDOWS || CRY_PLATFORM_LINUX
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_standard_validation");
+#elif CRY_PLATFORM_ANDROID
+		m_enabledInstanceLayers.push_back("VK_LAYER_GOOGLE_threading");
+		m_enabledInstanceLayers.push_back("VK_LAYER_GOOGLE_unique_objects");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_parameter_validation");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_object_tracker");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_core_validation");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_swapchain");
+		m_enabledInstanceLayers.push_back("VK_LAYER_LUNARG_image");
+#endif
 	}
 }
 
@@ -497,7 +548,22 @@ void CInstance::GatherPhysicalDeviceExtensionsToEnable()
 #if !defined(_RELEASE) && VK_EXT_debug_marker
 	m_enabledPhysicalDeviceExtensions.emplace_back(VK_EXT_DEBUG_MARKER_EXTENSION_NAME, false);
 #endif
+}
 
+const char* DebugLevelToString(VkDebugReportFlagsEXT flags)
+{
+	if      (flags & VK_DEBUG_REPORT_INFORMATION_BIT_EXT)
+		return "Info";
+	else if (flags & VK_DEBUG_REPORT_WARNING_BIT_EXT)
+		return "Warning";
+	else if (flags & VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT)
+		return "Performance";
+	else if (flags & VK_DEBUG_REPORT_ERROR_BIT_EXT)
+		return "Error";
+	else if (flags & VK_DEBUG_REPORT_DEBUG_BIT_EXT)
+		return "Debug";
+	else
+		return "Unknown";
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL CInstance::DebugLayerCallback(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType, uint64_t obj,
@@ -505,7 +571,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL CInstance::DebugLayerCallback(VkDebugReportFlagsE
 {
 	if (flags & (VK_DEBUG_REPORT_WARNING_BIT_EXT | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT | VK_DEBUG_REPORT_ERROR_BIT_EXT))
 	{
-		CryLog("[Vulkan DebugLayer, %s, %d]: %s", layerPrefix, code, msg);
+		CryLog("[Vulkan DebugLayer, %s, %s, %d]: %s", DebugLevelToString(flags), layerPrefix, code, msg);
 	}
 	return VK_FALSE;
 }
@@ -537,6 +603,47 @@ VkResult CInstance::InitializeDebugLayerCallback()
 	}
 
 	return VK_SUCCESS;
+}
+
+bool CInstance::ValidateDeviceFeatures(const SPhysicalDeviceInfo& deviceInfo) const
+{
+#if !RENDERER_ENABLE_FULL_PIPELINE
+
+#define VALIDATE_LIMIT(requiredValue, supportedValue)                                                                          \
+	if (deviceInfo.deviceProperties.limits.supportedValue < requiredValue)                                                       \
+	{                                                                                                                            \
+		VK_ERROR("Device failed feature validation: 'VkPhysicalDeviceLimits::" #supportedValue "': %d available, %d required",   \
+	              deviceInfo.deviceProperties.limits.supportedValue, requiredValue);                                             \
+	    return false;                                                                                                            \
+	}
+
+	const auto& validator = GetDeviceObjectFactory().GetObjectValidator();
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumBindings, maxBoundDescriptorSets);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumSamplers, maxDescriptorSetSamplers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumConstantBuffers, maxDescriptorSetUniformBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumShaderResources, maxPerStageResources);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumInlineConstantBuffers, maxDescriptorSetUniformBuffersDynamic);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumInlineShaderResources, maxPerStageResources);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumBuffers, maxDescriptorSetStorageBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumBufferSRVs, maxDescriptorSetStorageBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumBufferUAVs, maxDescriptorSetStorageBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumTextureSRVs, maxDescriptorSetSampledImages);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.NumTextureUAVs, maxDescriptorSetStorageImages);
+
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumSamplers, maxPerStageDescriptorSamplers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumConstantBuffers, maxPerStageDescriptorUniformBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumShaderResources, maxPerStageResources);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumBuffers, maxPerStageDescriptorStorageBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumBufferSRVs, maxPerStageDescriptorStorageBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumBufferUAVs, maxPerStageDescriptorStorageBuffers);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumTextureSRVs, maxPerStageDescriptorSampledImages);
+	VALIDATE_LIMIT(validator.Limits.PerDraw.PerShaderStage.NumTextureUAVs, maxPerStageDescriptorStorageImages);
+
+#undef VALIDATE_LIMIT
+
+#endif
+
+	return true;
 }
 
 }

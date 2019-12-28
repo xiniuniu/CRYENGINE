@@ -1,14 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include "DialogScriptView.h"
 #include "Controls/ColorCtrl.h"
-#include "Util/Variable.h"
 
 class CBaseObject;
 class CEntityObject;
 class CDialogManager;
+struct IVariable;
 
 #define DIALOG_EDITOR_NAME "Dialog Editor"
 #define DIALOG_EDITOR_VER  "1.00"
@@ -106,7 +106,6 @@ public:
 	BOOL           Create(DWORD dwStyle, const RECT& rect, CWnd* pParentWnd);
 	CXTPTaskPanel& GetTaskPanel() { return m_taskPanel; }
 
-	void           OnObjectEvent(CBaseObject* object, int event);
 	void           RecalcLayout(BOOL bNotify = TRUE);
 
 protected:

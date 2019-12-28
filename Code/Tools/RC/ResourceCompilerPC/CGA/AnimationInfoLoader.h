@@ -1,15 +1,15 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include "PathHelpers.h"
 
-class ICryXML;
+struct ICryXML;
 
 inline void UnifyPath(string& str)
 {
 	str.MakeLower();
-	str = PathHelpers::ToUnixPath(str);
+	str = PathUtil::ToUnixPath(str);
 }
 
 
@@ -74,8 +74,6 @@ public:
 	bool m_bAdditiveAnimation;
 
 	bool m_bNewFormat;
-
-	string m_skeletonName;
 
 	union 
 	{
@@ -147,18 +145,18 @@ struct SAnimationDefinition
 
 	void SetAnimationPath(const string& path, const string& unifiedPath)
 	{
-		m_AnimationPath = PathHelpers::AddSeparator(path);
+		m_AnimationPath = PathUtil::AddSlash(path);
 		UnifyPath(m_AnimationPath);
 
-		m_AnimationPathWithoutSlash = PathHelpers::RemoveSeparator(m_AnimationPath);
+		m_AnimationPathWithoutSlash = PathUtil::RemoveSlash(m_AnimationPath);
 
 		m_UnifiedAnimationPath = unifiedPath;
 	}
 
 	bool FindIdentical(const string& name, bool checkLen = false );
-	const string& GetAnimationPath() const { return m_AnimationPath; };
-	const string& GetAnimationPathWithoutSlash() const { return m_AnimationPathWithoutSlash; };
-	const string& GetUnifiedAnimationPath() const { return m_UnifiedAnimationPath; };
+	const string& GetAnimationPath() const { return m_AnimationPath; }
+	const string& GetAnimationPathWithoutSlash() const { return m_AnimationPathWithoutSlash; }
+	const string& GetUnifiedAnimationPath() const { return m_UnifiedAnimationPath; }
 
 
 	static void SetOverrideAnimationSettingsFilename(const string& animationSettingsFilename);

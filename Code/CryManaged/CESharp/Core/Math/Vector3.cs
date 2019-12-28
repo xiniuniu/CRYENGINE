@@ -1,12 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using CryEngine.Common;
 
 namespace CryEngine
 {
+	[StructLayout(LayoutKind.Sequential)]
 	public struct Vector3 : IEquatable<Vector3>
 	{
 		public static readonly Vector3 Zero = new Vector3(0, 0, 0);
@@ -19,8 +21,11 @@ namespace CryEngine
 		public static readonly Vector3 Left = new Vector3(-1, 0, 0);
 		public static readonly Vector3 Right = new Vector3(1, 0, 0);
 
+		[MarshalAs(UnmanagedType.R4)]
 		private float _x;
+		[MarshalAs(UnmanagedType.R4)]
 		private float _y;
+		[MarshalAs(UnmanagedType.R4)]
 		private float _z;
 
 		public float x { get { return _x; } set { _x = value; } }
@@ -39,6 +44,7 @@ namespace CryEngine
 		}
 
 		public Vector3(Vector2 v) : this(v.x, v.y, 0.0f) { }
+		public Vector3(Vector2 v, float z) : this(v.x, v.y, z) { }
 		public Vector3(Vector4 v) : this(v.x, v.y, v.z) { }
 
 		#region Overrides
@@ -76,7 +82,7 @@ namespace CryEngine
 
 		public override string ToString()
 		{
-			return string.Format(CultureInfo.CurrentCulture, "{0},{1},{2}", _x, _y, _z);
+			return string.Format(CultureInfo.CurrentCulture, "{0}, {1}, {2}", _x, _y, _z);
 		}
 		#endregion
 

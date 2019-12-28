@@ -7,6 +7,7 @@
 #include <CryAnimation/ICryAnimation.h>
 
 #include <CrySerialization/Enum.h>
+#include <Cry3DEngine/ISurfaceType.h>
 
 class CGeomEntityRegistrator
 	: public IEntityRegistrator
@@ -72,15 +73,15 @@ void CGeomEntity::Initialize()
 }
 
 //////////////////////////////////////////////////////////////////////////
-uint64 CGeomEntity::GetEventMask() const
+Cry::Entity::EventFlags CGeomEntity::GetEventMask() const
 {
 	return CDesignerEntityComponent::GetEventMask() |
-		BIT64(ENTITY_EVENT_COLLISION) |
-		BIT64(ENTITY_EVENT_HIDE) |
-		BIT64(ENTITY_EVENT_UNHIDE);
+		ENTITY_EVENT_COLLISION |
+		ENTITY_EVENT_HIDE |
+		ENTITY_EVENT_UNHIDE;
 }
 
-void CGeomEntity::ProcessEvent(SEntityEvent& event)
+void CGeomEntity::ProcessEvent(const SEntityEvent& event)
 {
 	CDesignerEntityComponent::ProcessEvent(event);
 

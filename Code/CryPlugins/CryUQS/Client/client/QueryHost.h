@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -8,6 +8,14 @@ namespace UQS
 {
 	namespace Client
 	{
+
+		//
+		// 2 classes:
+		//
+		//   CQueryHost
+		//   CQueryHostT<>
+		//
+
 
 		//===================================================================================
 		//
@@ -68,9 +76,14 @@ namespace UQS
 			// - persists when starting a new query (unless explicitly clearing them)
 			Shared::CVariantDict&           GetRuntimeParamsStorage();
 
+			// - sets the priority level of the query
+			// - default = 1 (lowest priority)
+			void                            SetPriority(int priority);
+
 			// - actually starts the query that has been prepared so far
 			// - cancels a possibly running query
-			void                            StartQuery();
+			// - the returned query ID may be invalid (which happens when the query couldn't even be started, e. g. due to missing runtime-parameters) (in this case, the callback will be triggered as well)
+			Core::CQueryID                  StartQuery();
 
 			// - prematurely cancels the possibly running query
 			// - will *not* trigger the potential callback previously set via SetCallback()
@@ -114,10 +127,262 @@ namespace UQS
 			Functor1<void*>                 m_pCallback;
 			void*                           m_pCallbackUserData;
 			Shared::CVariantDict            m_runtimeParams;
+			int                             m_priority;
 			Core::CQueryID                  m_queryID;
 			Core::QueryResultSetUniquePtr   m_pResultSet;
 			string                          m_exceptionMessageIfAny;
 		};
+
+		inline CQueryHost::CQueryHost()
+			: m_runningStatus(ERunningStatus::HasNotBeenStartedYet)
+			, m_pExpectedOutputType(nullptr)
+			, m_queryBlueprintID()
+			, m_pCallback(nullptr)
+			, m_pCallbackUserData(nullptr)
+			, m_runtimeParams()
+			, m_priority(UQS::Client::SQueryRequest::kDefaultPriority)
+			, m_queryID(Core::CQueryID::CreateInvalid())
+			, m_pResultSet()
+		{
+			// nothing
+		}
+
+		inline CQueryHost::~CQueryHost()
+		{
+			// cancel a possibly running query
+			if (m_queryID.IsValid())
+			{
+				if (Core::IHub* pHub = Core::IHubPlugin::GetHubPtr())
+				{
+					pHub->GetQueryManager().CancelQuery(m_queryID);
+				}
+			}
+		}
+
+		inline void CQueryHost::SetExpectedOutputType(const Shared::CTypeInfo* pExpectedOutputType)
+		{
+			m_pExpectedOutputType = pExpectedOutputType;
+		}
+
+		inline void CQueryHost::SetQueryBlueprint(const char* szQueryBlueprintName)
+		{
+			if (Core::IHub* pHub = Core::IHubPlugin::GetHubPtr())
+			{
+				m_queryBlueprintID = pHub->GetQueryBlueprintLibrary().FindQueryBlueprintIDByName(szQueryBlueprintName);
+			}
+
+			m_queryBlueprintName = szQueryBlueprintName;
+		}
+
+		inline const char* CQueryHost::GetQueryBlueprintName() const
+		{
+			return m_queryBlueprintName.c_str();
+		}
+
+		inline void CQueryHost::SetQueryBlueprint(const Core::CQueryBlueprintID& queryBlueprintID)
+		{
+			m_queryBlueprintID = queryBlueprintID;
+			m_queryBlueprintName = queryBlueprintID.GetQueryBlueprintName();
+		}
+
+		inline void CQueryHost::SetQuerierName(const char* szQuerierName)
+		{
+			m_querierName = szQuerierName;
+		}
+
+		inline void CQueryHost::SetCallback(const Functor1<void*>& pCallback, void* pUserData /* = nullptr */)
+		{
+			m_pCallback = pCallback;
+			m_pCallbackUserData = pUserData;
+		}
+
+		inline Shared::CVariantDict& CQueryHost::GetRuntimeParamsStorage()
+		{
+			return m_runtimeParams;
+		}
+
+		inline void CQueryHost::SetPriority(int priority)
+		{
+			CRY_ASSERT(priority > 0);
+			m_priority = priority;
+		}
+
+		inline Core::CQueryID CQueryHost::StartQuery()
+		{
+			HelpStartQuery();
+
+			// check for whether starting the query already caused an exception and report to the caller
+			if (m_runningStatus == ERunningStatus::ExceptionOccurred)
+			{
+				if (m_pCallback)
+				{
+					m_pCallback(m_pCallbackUserData);
+				}
+			}
+
+			return m_queryID;
+		}
+
+		inline void CQueryHost::CancelQuery()
+		{
+			if (m_queryID.IsValid())
+			{
+				if (Core::IHub* pHub = Core::IHubPlugin::GetHubPtr())
+				{
+					pHub->GetQueryManager().CancelQuery(m_queryID);
+				}
+
+				m_queryID = Core::CQueryID::CreateInvalid();
+			}
+		}
+
+		inline void CQueryHost::HelpStartQuery()
+		{
+			Core::IHub* pHub = Core::IHubPlugin::GetHubPtr();
+
+			//
+			// get rid of the previous result set (if not yet done via ClearResultSet())
+			//
+
+			m_pResultSet.reset();
+
+			//
+			// cancel a possibly running query
+			//
+
+			if (m_queryID.IsValid())
+			{
+				if (pHub)
+				{
+					pHub->GetQueryManager().CancelQuery(m_queryID);
+				}
+
+				m_queryID = Core::CQueryID::CreateInvalid();
+			}
+
+			//
+			// ensure the UQS plugin is present
+			//
+
+			if (!pHub)
+			{
+				m_exceptionMessageIfAny = "UQS Plugin is not present.";
+				m_runningStatus = ERunningStatus::ExceptionOccurred;
+				return;
+			}
+
+			//
+			// retrieve the query blueprint for a type check below
+			// (it could be that the blueprint has been reloaded after it was changed by the designer [at runtime!] and is now producing a different kind of items)
+			//
+
+			const Core::IQueryBlueprint* pQueryBlueprint = pHub->GetQueryBlueprintLibrary().GetQueryBlueprintByID(m_queryBlueprintID);
+			if (!pQueryBlueprint)
+			{
+				m_exceptionMessageIfAny.Format("Query blueprint '%s' is not present in the blueprint library.", m_queryBlueprintID.GetQueryBlueprintName());
+				m_runningStatus = ERunningStatus::ExceptionOccurred;
+				return;
+			}
+
+			//
+			// if the caller expects a certain item type in the result set then verify it
+			//
+
+			if (m_pExpectedOutputType)
+			{
+				const Shared::CTypeInfo& typeOfGeneratedItems = pQueryBlueprint->GetOutputType();
+
+				if (*m_pExpectedOutputType != typeOfGeneratedItems)
+				{
+					m_exceptionMessageIfAny.Format("Query blueprint '%s': item type mismatch: generated items are of type %s, but we expected %s", m_queryBlueprintID.GetQueryBlueprintName(), typeOfGeneratedItems.name(), m_pExpectedOutputType->name());
+					m_runningStatus = ERunningStatus::ExceptionOccurred;
+					return;
+				}
+			}
+
+			//
+			// start the query
+			//
+
+			const SQueryRequest queryRequest(m_queryBlueprintID, m_runtimeParams, m_querierName.c_str(), functor(*this, &CQueryHost::OnUQSQueryFinished), m_priority);
+			UQS::Shared::CUqsString error;
+			m_queryID = pHub->GetQueryManager().StartQuery(queryRequest, error);
+
+			if (m_queryID.IsValid())
+			{
+				m_runningStatus = ERunningStatus::StillRunning;
+			}
+			else
+			{
+				m_exceptionMessageIfAny = error.c_str();
+				m_runningStatus = ERunningStatus::ExceptionOccurred;
+			}
+		}
+
+		inline bool CQueryHost::IsStillRunning() const
+		{
+			return m_runningStatus == ERunningStatus::StillRunning;
+		}
+
+		inline bool CQueryHost::HasSucceeded() const
+		{
+			return m_runningStatus == ERunningStatus::FinishedWithSuccess;
+		}
+
+		inline const Core::IQueryResultSet& CQueryHost::GetResultSet() const
+		{
+			CRY_ASSERT(m_runningStatus == ERunningStatus::FinishedWithSuccess);
+			CRY_ASSERT(m_pResultSet);
+			return *m_pResultSet;
+		}
+
+		inline const char* CQueryHost::GetExceptionMessage() const
+		{
+			CRY_ASSERT(m_runningStatus == ERunningStatus::ExceptionOccurred);
+			return m_exceptionMessageIfAny.c_str();
+		}
+
+		inline void CQueryHost::ClearResultSet()
+		{
+			m_pResultSet.reset();
+		}
+
+		inline void CQueryHost::OnUQSQueryFinished(const Core::SQueryResult& result)
+		{
+			CRY_ASSERT(result.queryID == m_queryID);
+
+			m_queryID = Core::CQueryID::CreateInvalid();
+
+			switch (result.status)
+			{
+			case Core::SQueryResult::EStatus::Success:
+				m_pResultSet = std::move(result.pResultSet);
+				m_runningStatus = ERunningStatus::FinishedWithSuccess;
+				break;
+
+			case Core::SQueryResult::EStatus::ExceptionOccurred:
+				m_exceptionMessageIfAny = result.szError;
+				m_runningStatus = ERunningStatus::ExceptionOccurred;
+				break;
+
+			case Core::SQueryResult::EStatus::CanceledByHubTearDown:
+				// FIXME: is it OK to treat this as an exception as well? (after all, the query hasn't fully finished!)
+				m_exceptionMessageIfAny = "Query got canceled due to Hub being torn down now.";
+				m_runningStatus = ERunningStatus::ExceptionOccurred;
+				break;
+
+			default:
+				CRY_ASSERT(0);
+				m_exceptionMessageIfAny = "CQueryHost::OnUQSQueryFinished: unhandled status enum.";
+				m_runningStatus = ERunningStatus::ExceptionOccurred;
+				break;
+			}
+
+			if (m_pCallback)
+			{
+				m_pCallback(m_pCallbackUserData);
+			}
+		}
 
 		//===================================================================================
 		//
@@ -176,7 +441,7 @@ namespace UQS
 		template <class TItem>
 		typename CQueryHostT<TItem>::SResultingItemWithScore CQueryHostT<TItem>::GetResultSetItem(size_t index) const
 		{
-			assert(GetResultSet().GetItemFactory().GetItemType() == Shared::SDataTypeHelper<TItem>::GetTypeInfo());
+			CRY_ASSERT(GetResultSet().GetItemFactory().GetItemType() == Shared::SDataTypeHelper<TItem>::GetTypeInfo());
 			const Core::IQueryResultSet::SResultSetEntry& resultSetEntry = GetResultSet().GetResult(index);
 			SResultingItemWithScore res = { *static_cast<const TItem*>(resultSetEntry.pItem), resultSetEntry.score };
 			return res;

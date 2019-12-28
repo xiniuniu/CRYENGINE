@@ -8,6 +8,7 @@
 #include <CryAudio/Dialog/IDialogSystem.h>
 #include <CrySystem/XML/IReadWriteXMLSink.h>
 #include <CrySystem/Scaleform/IFlashUI.h>
+#include <CrySystem/CryVersion.h>
 #include <CryAISystem/IPathfinder.h>
 #include <CryAction/IMaterialEffects.h>
 #include <CryCore/CryTypeInfo.h>
@@ -84,7 +85,7 @@
 %ignore NODE_CHUNK_DESC_0824; // until it's tm is properly swigged
 %include "../../../../CryEngine/CryCommon/Cry3DEngine/CGF/CryHeaders.h"
 
-%include "../../../../CryEngine/CryCommon/CryThreading/CryThreadSafeRendererContainer.h"
+%include "../../../../CryEngine/CryCommon/CryThreading/CryThreadSafePushContainer.h"
 
 %include "../../../../CryEngine/CryCommon/CryMath/CryHalf.inl"
 %include "../../../../CryEngine/CryCommon/CryMath/Cry_Math.h"
@@ -188,11 +189,9 @@ SMART_PTR_TEMPLATE(ISerializableInfo)
 SMART_PTR_TEMPLATE(IUIElementIterator)
 SMART_PTR_TEMPLATE(IUIEventSystemIterator)
 SMART_PTR_TEMPLATE(IWriteXMLSource)
-%template(SmartObjectNavDataPtr) _smart_ptr<PathPointDescriptor::SmartObjectNavData>;
 SMART_PTR_TEMPLATE(SCrySessionID)
 SMART_PTR_TEMPLATE(SCryUserID)
 SMART_PTR_TEMPLATE(SMFXResourceList)
-SMART_PTR_TEMPLATE(IParticleEffectIterator)
 
 //%include <std_vector.i>
 //%template(ProfilerList) std::vector<CFrameProfiler*>;

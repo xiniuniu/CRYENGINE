@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DialogCommon.h"
@@ -12,21 +12,19 @@
 #include "ImporterUtil.h"
 
 // EditorCommon
-#include <Controls\QuestionDialog.h>
+#include <Controls/QuestionDialog.h>
 #include <CryIcon.h>
+#include <DragDrop.h>
+#include <FileDialogs/EngineFileDialog.h>
 #include <FileDialogs/ExtensionFilter.h>
 #include <FileDialogs/SystemFileDialog.h>
-#include <FileDialogs/EngineFileDialog.h>
-#include <FilePathUtil.h>
-#include <DragDrop.h>
 #include <Notifications/NotificationCenter.h>
+#include <PathUtils.h>
 #include <ThreadingUtils.h>
 
 #include <AssetSystem/Asset.h>
 #include <AssetSystem/AssetManager.h>
 #include <AssetSystem/Browser/AssetBrowserDialog.h>
-
-// EditorQt
 
 // Qt
 #include <QFile>
@@ -176,7 +174,7 @@ void CBaseDialog::CreateMenu(IDialogHost* pDialogHost)
 {
 	if (GetToolButtons() & eToolButtonFlags_Reimport)
 	{
-		pDialogHost->Host_AddToMenu("File", "meshimporter.reimport");
+		pDialogHost->Host_AddToMenu("File", "general.reimport");
 	}
 }
 
@@ -200,6 +198,8 @@ bool CBaseDialog::SaveAs(const QString& targetFilePath)
 	{
 		return false;
 	}
+
+	GetIEditor()->GetSystem()->GetIPak()->MakeDir(PathUtil::GetDirectory(ctx.targetFilePath.c_str()));
 
 	const string absMetaSrcPath = 
 		m_sceneData->pAsset
@@ -238,9 +238,22 @@ void CBaseDialog::dragEnterEvent(QDragEnterEvent* pEvent)
 {
 	auto pDragDropData = CDragDropData::FromMimeData(pEvent->mimeData());
 	const QStringList filePaths = pDragDropData->GetFilePaths();
-	if (!filePaths.empty())
+	if (filePaths.size() != 1)
 	{
-		pEvent->acceptProposedAction();
+		return;
+	}
+
+	const string fileExtension(PathUtil::GetExt(QtUtil::ToString(filePaths.first())));
+
+	FbxTool::TIndex numExtensions;
+	const char* const* const ppExtensions = FbxTool::GetSupportedFileExtensions(numExtensions);
+	for (FbxTool::TIndex i = 0; i < numExtensions; ++i)
+	{
+		if (fileExtension.CompareNoCase(ppExtensions[i]) == 0)
+		{
+			pEvent->acceptProposedAction();
+			break;
+		}
 	}
 }
 
@@ -370,6 +383,8 @@ bool CBaseDialog::OnImportFile()
 		return false;
 	}
 
+	OnCloseAsset();
+
 	ImportFile(filePath);
 
 	return true;
@@ -472,7 +487,7 @@ void CBaseDialog::OnOpen()
 		return;
 	}
 
-	(void)Open(assetFilePath);
+	Open(assetFilePath);
 }
 
 bool CBaseDialog::Open(const string& filePath)
@@ -492,7 +507,7 @@ bool CBaseDialog::Open(const string& filePath)
 		{
 			if (pAsset->IsBeingEdited())
 			{
-				GetIEditor()->GetNotificationCenter()->ShowInfo(tr("Asset already open"), tr("'%1' already open").arg(pAsset->GetName()));
+				GetIEditor()->GetNotificationCenter()->ShowInfo(tr("Asset already open"), tr("'%1' already open").arg(pAsset->GetName().c_str()));
 				return false;  // A particular asset can only edited by a single editor at a time.
 			}
 

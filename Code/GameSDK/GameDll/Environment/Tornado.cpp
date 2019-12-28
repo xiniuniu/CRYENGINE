@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Tornado.h"
@@ -58,7 +58,7 @@ bool CTornado::ReloadExtension( IGameObject * pGameObject, const SEntitySpawnPar
 {
 	ResetGameObject();
 
-	CRY_ASSERT_MESSAGE(false, "CTornado::ReloadExtension not implemented");
+	CRY_ASSERT(false, "CTornado::ReloadExtension not implemented");
 	
 	return false;
 }
@@ -66,7 +66,7 @@ bool CTornado::ReloadExtension( IGameObject * pGameObject, const SEntitySpawnPar
 //------------------------------------------------------------------------
 bool CTornado::GetEntityPoolSignature( TSerialize signature )
 {
-	CRY_ASSERT_MESSAGE(false, "CTornado::GetEntityPoolSignature not implemented");
+	CRY_ASSERT(false, "CTornado::GetEntityPoolSignature not implemented");
 	
 	return true;
 }
@@ -276,7 +276,7 @@ void CTornado::HandleEvent(const SGameObjectEvent &event)
 }
 
 //------------------------------------------------------------------------
-void CTornado::ProcessEvent(SEntityEvent &event)
+void CTornado::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -284,6 +284,11 @@ void CTornado::ProcessEvent(SEntityEvent &event)
 		Reset();
 		break;
 	}
+}
+
+Cry::Entity::EventFlags CTornado::GetEventMask() const
+{
+	return ENTITY_EVENT_RESET;
 }
 
 //------------------------------------------------------------------------

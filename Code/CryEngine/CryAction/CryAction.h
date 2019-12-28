@@ -1,25 +1,6 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-   Description:	Implementation of the IGameFramework interface. CCryAction
-                provides a generic game framework for action based games
-                such as 1st and 3rd person shooters.
-
-   -------------------------------------------------------------------------
-   History:
-   - 20:7:2004   10:51 : Created by Marco Koegler
-   - 3:8:2004		11:11 : Taken-over by Marcio Martins
-
-*************************************************************************/
-#ifndef __CRYACTION_H__
-#define __CRYACTION_H__
-
-#if _MSC_VER > 1000
-	#pragma once
-#endif
+#pragma once
 
 #include <CrySystem/ISystem.h>
 #include <CrySystem/ICmdLine.h>
@@ -47,7 +28,6 @@ class CScriptBind_VehicleSystem;
 class CScriptBind_Vehicle;
 class CScriptBind_VehicleSeat;
 class CScriptBind_Inventory;
-class CScriptBind_DialogSystem;
 class CScriptBind_MaterialEffects;
 class CScriptBind_UIAction;
 
@@ -75,20 +55,14 @@ class CViewSystem;
 class CGameplayRecorder;
 class CPersistantDebug;
 class CPlayerProfileManager;
-class CDialogSystem;
-class CSubtitleManager;
 class CGameplayAnalyst;
 class CTimeOfDayScheduler;
 class CNetworkCVars;
 class CCryActionCVars;
 class CGameStatsConfig;
-class CSignalTimer;
-class CRangeSignaling;
-class CAIProxy;
 class CommunicationVoiceLibrary;
 class CCustomActionManager;
 class CCustomEventManager;
-class CAIProxyManager;
 class CForceFeedBackSystem;
 class CCryActionPhysicQueues;
 class CNetworkStallTickerThread;
@@ -96,29 +70,40 @@ class CSharedParamsManager;
 struct ICooperativeAnimationManager;
 struct IGameSessionHandler;
 class CRuntimeAreaManager;
-class CColorGradientManager;
 
 struct CAnimationGraphCVars;
 struct IRealtimeRemoteUpdate;
 struct ISerializeHelper;
 struct ITimeDemoRecorder;
 
-class CSegmentedWorld;
-
 class CNetMessageDistpatcher;
-class CManualFrameStepController;
 class CEntityContainerMgr;
 class CEntityAttachmentExNodeRegistry;
+
+namespace BehaviorTree
+{
+	struct INodeCreator;
+}
+
 
 class CCryAction :
 	public IGameFramework
 {
 
 public:
-	CCryAction();
+	CCryAction(SSystemInitParams& initParams);
 	~CCryAction();
 
 	// IGameFramework
+	virtual void                          ShutDown();
+
+	virtual void                          PreSystemUpdate();
+	virtual bool                          PostSystemUpdate(bool hasFocus, CEnumFlags<ESystemUpdateFlags> updateFlags = CEnumFlags<ESystemUpdateFlags>());
+	virtual void                          PreFinalizeCamera(CEnumFlags<ESystemUpdateFlags> updateFlags);
+	virtual void                          PreRender();
+	virtual void                          PostRender(CEnumFlags<ESystemUpdateFlags> updateFlags);
+	virtual void                          PostRenderSubmit();
+
 	void                                  ClearTimers();
 	virtual TimerID                       AddTimer(CTimeValue interval, bool repeat, TimerCallback callback, void* userdata);
 	virtual void*                         RemoveTimer(TimerID timerID);
@@ -132,13 +117,9 @@ public:
 	virtual void                          RegisterFactory(const char* name, ISaveGame*(*func)(), bool);
 	virtual void                          RegisterFactory(const char* name, ILoadGame*(*func)(), bool);
 
-	virtual bool                          StartEngine(SSystemInitParams& startupParams);
 	virtual void                          InitGameType(bool multiplayer, bool fromInit);
 	virtual bool                          CompleteInit();
-	virtual void                          ShutdownEngine();
-	virtual void                          ShutdownEngineFast();
 	virtual void                          PrePhysicsUpdate() /*override*/;
-	virtual int                           ManualFrameUpdate(bool haveFocus, unsigned int updateFlags);
 	virtual void                          Reset(bool clients);
 	virtual void                          GetMemoryUsage(ICrySizer* pSizer) const;
 
@@ -172,8 +153,6 @@ public:
 	virtual IMaterialEffects*             GetIMaterialEffects();
 	virtual IBreakableGlassSystem*        GetIBreakableGlassSystem();
 	virtual IPlayerProfileManager*        GetIPlayerProfileManager();
-	virtual ISubtitleManager*             GetISubtitleManager();
-	virtual IDialogSystem*                GetIDialogSystem();
 	virtual ICooperativeAnimationManager* GetICooperativeAnimationManager();
 	virtual ICheckpointSystem*            GetICheckpointSystem();
 	virtual IForceFeedbackSystem*         GetIForceFeedbackSystem() const;
@@ -181,6 +160,7 @@ public:
 	virtual ICustomEventManager*          GetICustomEventManager() const;
 	virtual IRealtimeRemoteUpdate*        GetIRealTimeRemoteUpdate();
 	virtual ITimeDemoRecorder*            GetITimeDemoRecorder() const;
+	virtual ITimeDemoRecorder*            SetITimeDemoRecorder(ITimeDemoRecorder* pRecorder);
 
 	virtual bool                          StartGameContext(const SGameStartParams* pGameStartParams);
 	virtual bool                          ChangeGameContext(const SGameContextParams* pGameContextParams);
@@ -257,8 +237,10 @@ public:
 
 	virtual bool                  CanCheat();
 
-	INetNub*                      GetServerNetNub();
-	INetNub*                      GetClientNetNub();
+	virtual INetNub*              GetServerNetNub();
+	virtual IGameServerNub*       GetIGameServerNub();
+	virtual INetNub*              GetClientNetNub();
+	virtual IGameClientNub*       GetIGameClientNub();
 
 	void                          SetGameGUID(const char* gameGUID);
 	const char*                   GetGameGUID()             { return m_gameGUID; }
@@ -271,6 +253,7 @@ public:
 	virtual ISharedParamsManager* GetISharedParamsManager();
 
 	virtual IGame*                GetIGame();
+	virtual void* GetGameModuleHandle() const { return m_externalGameLibrary.dllHandle; }
 
 	virtual float                 GetLoadSaveDelay() const { return m_lastSaveLoad; }
 
@@ -288,6 +271,8 @@ public:
 	void DefineProtocolRMI(IProtocolBuilder* pBuilder);
 	virtual void DoInvokeRMI(_smart_ptr<IRMIMessageBody> pBody, unsigned where, int channel, const bool isGameObjectRmi);
 
+	virtual IScriptTable* GetActionScriptBindTable();
+
 protected:
 	virtual ICryUnknownPtr        QueryExtensionInterfaceById(const CryInterfaceID& interfaceID) const;
 	// ~IGameFramework
@@ -303,11 +288,8 @@ public:
 	CScriptBind_VehicleSeat*    GetVehicleSeatScriptBind() { return m_pScriptBindVehicleSeat; }
 	CScriptBind_Inventory*      GetInventoryScriptBind()   { return m_pScriptInventory; }
 	CPersistantDebug*           GetPersistantDebug()       { return m_pPersistantDebug; }
-	CSignalTimer*               GetSignalTimer();
-	CRangeSignaling*            GetRangeSignaling();
 	virtual IPersistantDebug*   GetIPersistantDebug();
 	virtual IGameStatsConfig*   GetIGameStatsConfig();
-	CColorGradientManager*      GetColorGradientManager() const { return m_pColorGradientManager; }
 
 	virtual void                AddBreakEventListener(IBreakEventListener* pListener);
 	virtual void                RemoveBreakEventListener(IBreakEventListener* pListener);
@@ -318,7 +300,6 @@ public:
 	virtual void                RegisterListener(IGameFrameworkListener* pGameFrameworkListener, const char* name, EFRAMEWORKLISTENERPRIORITY eFrameworkListenerPriority);
 	virtual void                UnregisterListener(IGameFrameworkListener* pGameFrameworkListener);
 
-	CDialogSystem*              GetDialogSystem()             { return m_pDialogSystem; }
 	CTimeOfDayScheduler*        GetTimeOfDayScheduler() const { return m_pTimeOfDayScheduler; }
 
 	CGameStatsConfig*           GetGameStatsConfig();
@@ -328,7 +309,6 @@ public:
 	void                        SetGameSessionHandler(IGameSessionHandler* pSessionHandler);
 
 	CNetMessageDistpatcher*     GetNetMessageDispatcher()      { return m_pNetMsgDispatcher; }
-	CManualFrameStepController* GetManualFrameStepController() { return m_pManualFrameStepController; }
 	CEntityContainerMgr&         GetEntityContainerMgr()       { return *m_pEntityContainerMgr; }
 	CEntityAttachmentExNodeRegistry& GetEntityAttachmentExNodeRegistry() { return *m_pEntityAttachmentExNodeRegistry; }
 
@@ -349,11 +329,11 @@ public:
 	virtual void                  ClearNextFrameCommand();
 	virtual void                  PrefetchLevelAssets(const bool bEnforceAll);
 
-	virtual void                  ShowPageInBrowser(const char* URL);
+	virtual void                  ShowPageInBrowser(const char* szUrl);
 	virtual bool                  StartProcess(const char* cmd_line);
 	virtual bool                  SaveServerConfig(const char* path);
 
-	void                          OnActionEvent(const SActionEvent& ev);
+	virtual void                  OnActionEvent(const SActionEvent& ev);
 
 	bool                          IsPbSvEnabled() const { return m_pbSvEnabled; }
 	bool                          IsPbClEnabled() const { return m_pbClEnabled; }
@@ -361,10 +341,6 @@ public:
 	void                          DumpMemInfo(const char* format, ...) PRINTF_PARAMS(2, 3);
 
 	const char*                   GetStartLevelSaveGameName();
-
-	virtual IAIActorProxy*        GetAIActorProxy(EntityId entityid) const;
-	CAIProxyManager*              GetAIProxyManager()       { return m_pAIProxyManager; }
-	const CAIProxyManager*        GetAIProxyManager() const { return m_pAIProxyManager; }
 
 	void                          CreatePhysicsQueues();
 	void                          ClearPhysicsQueues();
@@ -375,20 +351,19 @@ public:
 	void                    StopNetworkStallTicker();
 	void                    GoToSegment(int x, int y);
 
-	bool                    PreUpdate(bool haveFocus, unsigned int updateFlags);
-	int                     Update(bool haveFocus, unsigned int updateFlags);
-	void                    PostUpdate(bool haveFocus, unsigned int updateFlags);
-
+	void SetGameLevelLoadListener(IGameLevelLoadListener* pLoader) { m_pGameLevelLoadListener = pLoader; }
+	IGameLevelLoadListener* GetGameLevelLoadListener() const { return m_pGameLevelLoadListener; }
 	const std::vector<INetworkedClientListener*>& GetNetworkClientListeners() const { return m_networkClientListeners; }
+	void FastShutdown();
 
 private:
+	bool Initialize(SSystemInitParams& initParams);
+
 	void InitScriptBinds();
 	void ReleaseScriptBinds();
 
 	bool InitGame(SSystemInitParams& startupParams);
 	bool ShutdownGame();
-
-	void Run(const char* szAutoStartLevelName);
 
 	void InitForceFeedbackSystem();
 	void InitGameVolumesManager();
@@ -401,7 +376,6 @@ private:
 	// console commands provided by CryAction
 	static void DumpMapsCmd(IConsoleCmdArgs* args);
 	static void MapCmd(IConsoleCmdArgs* args);
-	static void ReloadReadabilityXML(IConsoleCmdArgs* args);
 	static void UnloadCmd(IConsoleCmdArgs* args);
 	static void PlayCmd(IConsoleCmdArgs* args);
 	static void ConnectCmd(IConsoleCmdArgs* args);
@@ -468,6 +442,7 @@ private:
 	// change the game query (better than setting it explicitly)
 	void SetGameQueryListener(CGameQueryListener*);
 
+	void RegisterActionBehaviorTreeNodes();
 	void CheckEndLevelSchedule();
 
 #if !defined(_RELEASE)
@@ -498,10 +473,7 @@ private:
 	IEntitySystem*                m_pEntitySystem;
 	ITimer*                       m_pTimer;
 	ILog*                         m_pLog;
-	void*                         m_systemDll;
 	IGameToEditorInterface*       m_pGameToEditor;
-
-	_smart_ptr<CActionGame>       m_pGame;
 
 	char                          m_editorLevelName[512]; // to avoid having to call string constructor, or allocating memory.
 	char                          m_editorLevelFolder[512];
@@ -525,8 +497,6 @@ private:
 	CMaterialEffects*             m_pMaterialEffects;
 	IBreakableGlassSystem*        m_pBreakableGlassSystem;
 	CPlayerProfileManager*        m_pPlayerProfileManager;
-	CDialogSystem*                m_pDialogSystem;
-	CSubtitleManager*             m_pSubtitleManager;
 
 	IEffectSystem*                m_pEffectSystem;
 	CGameSerialize*               m_pGameSerialize;
@@ -545,16 +515,14 @@ private:
 	ICooperativeAnimationManager* m_pCooperativeAnimationManager;
 	IGameSessionHandler*          m_pGameSessionHandler;
 
-	CAIProxyManager*              m_pAIProxyManager;
-	CSegmentedWorld*              m_pSegmentedWorld;
-
 	IGameVolumes*                 m_pGameVolumesManager;
 
 	// developer mode
 	CDevMode* m_pDevMode;
 
 	// TimeDemo recorder.
-	CTimeDemoRecorder* m_pTimeDemoRecorder;
+	ITimeDemoRecorder* m_pTimeDemoRecorder;
+	std::unique_ptr<CTimeDemoRecorder> m_pDefaultTimeDemoRecorder;
 
 	// game queries
 	CGameQueryListener* m_pGameQueryListener;
@@ -572,7 +540,6 @@ private:
 	CScriptBind_Vehicle*          m_pScriptBindVehicle;
 	CScriptBind_VehicleSeat*      m_pScriptBindVehicleSeat;
 	CScriptBind_Inventory*        m_pScriptInventory;
-	CScriptBind_DialogSystem*     m_pScriptBindDS;
 	CScriptBind_MaterialEffects*  m_pScriptBindMFX;
 	CScriptBind_UIAction*         m_pScriptBindUIAction;
 	CTimeOfDayScheduler*          m_pTimeOfDayScheduler;
@@ -583,8 +550,6 @@ private:
 
 	CNetworkCVars*                m_pNetworkCVars;
 	CCryActionCVars*              m_pCryActionCVars;
-
-	CColorGradientManager*        m_pColorGradientManager;
 
 	//-- Network Stall ticker thread
 #ifdef USE_NETWORK_STALL_TICKER_THREAD
@@ -604,8 +569,6 @@ private:
 	ICVar* m_pEnableLoadingScreen;
 	ICVar* m_pCheats;
 	ICVar* m_pShowLanBrowserCVAR;
-	ICVar* m_pDebugSignalTimers;
-	ICVar* m_pDebugRangeSignaling;
 	ICVar* m_pAsyncLevelLoad;
 
 	bool   m_bShowLanBrowser;
@@ -687,13 +650,14 @@ private:
 	SExternalGameLibrary                   m_externalGameLibrary;
 
 	CNetMessageDistpatcher*                m_pNetMsgDispatcher;
-	CManualFrameStepController*            m_pManualFrameStepController;
 	CEntityContainerMgr*                   m_pEntityContainerMgr;
 	CEntityAttachmentExNodeRegistry*       m_pEntityAttachmentExNodeRegistry;
 
 	CTimeValue                             m_levelStartTime;
 
+	IGameLevelLoadListener*                      m_pGameLevelLoadListener = nullptr;
 	std::vector<INetworkedClientListener*> m_networkClientListeners;
-};
 
-#endif //__CRYACTION_H__
+	std::unique_ptr<BehaviorTree::INodeCreator> m_pAnimateFragmentNodeCreator;
+	_smart_ptr<CActionGame>                m_pGame;
+};

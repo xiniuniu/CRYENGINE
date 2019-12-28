@@ -1,10 +1,11 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryCore/Containers/CryListenerSet.h>
 #include <CryCore/StlUtils.h>
 #include <CryEntitySystem/IEntityLayer.h>
+#include <CryEntitySystem/IEntitySystem.h>
 
 struct SEntityLayerGarbage
 {
@@ -57,14 +58,14 @@ class CEntityLayer : public IEntityLayer
 		}
 
 		EntityId m_id;
-		bool     m_bIsNoAwake : 1;
-		bool     m_bIsHidden : 1;
+		bool     m_bIsNoAwake          : 1;
+		bool     m_bIsHidden           : 1;
 		bool     m_bEnableScriptUpdate : 1;
 	};
 
 	struct EntityPropFindPred
 	{
-		EntityPropFindPred(EntityId _idToFind) : idToFind(_idToFind) {}
+		explicit EntityPropFindPred(EntityId _idToFind) : idToFind(_idToFind) {}
 		bool operator()(const EntityProp& entityProp) { return entityProp.m_id == idToFind; }
 		EntityId idToFind;
 	};
@@ -103,12 +104,13 @@ private:
 
 	void EnableBrushes(bool isEnable);
 	void EnableEntities(bool isEnable);
+	void EnableEntity(CEntity& entity, EntityProp& property, bool isEnable);
 	void ReEvalNeedForHeap();
 	void NotifyActivationToListeners(bool bActivated);
 
 private:
 	typedef std::unordered_map<EntityId, EntityProp, stl::hash_uint32> TEntityProps;
-	typedef CListenerSet<IEntityLayerListener*> TListenerSet;
+	typedef CListenerSet<IEntityLayerListener*>                        TListenerSet;
 
 	int                        m_specs;
 	string                     m_name;

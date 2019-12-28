@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -34,8 +34,26 @@ struct SPhysicalDeviceInfo
 	std::array<VkFormatProperties, VK_FORMAT_RANGE_SIZE> formatProperties;
 };
 
+class CInstanceHolder
+{
+protected:
+	VkInstance m_instanceHandle;
+
+public:
+
+	CInstanceHolder() : m_instanceHandle(VK_NULL_HANDLE) {}
+
+	~CInstanceHolder()
+	{
+		if (m_instanceHandle != VK_NULL_HANDLE)
+		{
+			vkDestroyInstance(m_instanceHandle, VK_NULL_HANDLE);
+		}
+	}
+};
+
 //CInstance handles the initalization of the Vulkan API and instance, querying the hardware capabilities and creating a device and surface
-class CInstance
+class CInstance : public CInstanceHolder
 {
 
 public:
@@ -51,7 +69,11 @@ public:
 
 	size_t GetPhysicalDeviceCount() const { return m_physicalDevices.size(); }
 
-	_smart_ptr<CDevice> CreateDevice(size_t physicalDeviceIndex, const SSurfaceCreationInfo& surfaceCreationInfo);
+	_smart_ptr<CDevice> CreateDevice(size_t physicalDeviceIndex);
+
+	//platform dependant function to create platform independant VkSurfaceKHR handle
+	VkResult CreateSurface(const SSurfaceCreationInfo& info, VkSurfaceKHR* surface);
+	void DestroySurface(VkSurfaceKHR surface);
 
 private:
 	VkResult InitializeInstanceLayerInfos();
@@ -63,9 +85,6 @@ private:
 	VkResult InitializePhysicalDeviceLayerInfos(SPhysicalDeviceInfo& info);
 	VkResult InitializePhysicalDeviceExtensions(VkPhysicalDevice& device, const char* layerName, std::vector<VkExtensionProperties>& extensions);
 
-	//platform dependant function to create platform independant VkSurfaceKHR handle
-	VkResult CreateSurface(const SSurfaceCreationInfo& info, VkSurfaceKHR* surface);
-
 	//Gather* functions fill in the names of the layers & extensions we want to enable. For now, the only debug layer queried is VK_LAYER_LUNARG_standard_validation, could potentially try to
 	//query specific ones if the standard validation layer not present.
 	void GatherInstanceLayersToEnable();
@@ -75,6 +94,8 @@ private:
 
 	static VKAPI_ATTR VkBool32 VKAPI_CALL DebugLayerCallback(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType, 
 		uint64_t obj, size_t location, int32_t code, const char* layerPrefix, const char* msg, void* userData);
+
+	bool ValidateDeviceFeatures(const SPhysicalDeviceInfo& deviceInfo) const;
 
 private:
 	struct SExtensionInfo
@@ -97,7 +118,6 @@ private:
 	std::vector<const char*>    m_enabledPhysicalDeviceLayers;
 	std::vector<SExtensionInfo> m_enabledPhysicalDeviceExtensions;
 
-	VkInstance                  m_instanceHandle;
 	VkDebugReportCallbackEXT    m_debugLayerCallbackHandle;
 
 };

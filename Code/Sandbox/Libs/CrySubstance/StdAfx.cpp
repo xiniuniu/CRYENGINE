@@ -1,3 +1,3 @@
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 // Precompiled header.
 #include "StdAfx.h"

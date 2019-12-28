@@ -1,9 +1,10 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 #ifdef INCLUDE_SCALEFORM_SDK
 
+#include <CryMath/Cry_Math.h>
 #include <CrySystem/Scaleform/ConfigScaleform.h>
 	#include "SharedStates.h"
 
@@ -22,6 +23,7 @@
 	#include <CryRenderer/ITexture.h>
 	#include <CrySystem/IStreamEngine.h>
 	#include <CryString/UnicodeFunctions.h>
+	#include <CrySystem/ConsoleRegistration.h>
 
 	#ifndef GFC_NO_THREADSUPPORT
 //////////////////////////////////////////////////////////////////////////
@@ -48,8 +50,7 @@ GThread::ThreadPriority ConvertToGFxThreadPriority(int32 nPriority)
 // CryGFxFileOpener
 
 CryGFxFileOpener::CryGFxFileOpener()
-{
-}
+{}
 
 CryGFxFileOpener& CryGFxFileOpener::GetAccess()
 {
@@ -58,16 +59,16 @@ CryGFxFileOpener& CryGFxFileOpener::GetAccess()
 }
 
 CryGFxFileOpener::~CryGFxFileOpener()
-{
-}
+{}
 
 GFile* CryGFxFileOpener::OpenFile(const char* pUrl, SInt flags, SInt /*mode*/)
 {
 	assert(pUrl);
 	if (flags & ~(GFileConstants::Open_Read | GFileConstants::Open_Buffered))
 		return 0;
-	const char* pExt = PathUtil::GetExt(pUrl);
+
 	#if defined(USE_GFX_VIDEO)
+	const char* pExt = PathUtil::GetExt(pUrl);
 	if (!strcmp(pUrl, internal_video_player))
 		return new GMemoryFile(pUrl, fxvideoplayer_swf, sizeof(fxvideoplayer_swf));
 	if (!stricmp(pExt, "usm"))
@@ -155,11 +156,16 @@ void CryGFxURLBuilder::BuildURL(GString* pPath, const LocationInfo& loc)
 // CryGFxTextClipboard
 
 CryGFxTextClipboard::CryGFxTextClipboard()
+#if CRY_PLATFORM_WINDOWS
+	: m_bSyncingClipboardFromWindows(false)
+#endif // CRY_PLATFORM_WINDOWS
 {
 	if (auto pSystem = gEnv->pSystem)
 	{
 #if CRY_PLATFORM_WINDOWS
-		HandleMessage(reinterpret_cast<HWND>(pSystem->GetHWND()), WM_CLIPBOARDUPDATE, 0, 0, nullptr); // Sync current clipboard content with Scaleform
+		const HWND hWnd = reinterpret_cast<HWND>(pSystem->GetHWND());
+		AddClipboardFormatListener(hWnd);
+		HandleMessage(hWnd, WM_CLIPBOARDUPDATE, 0, 0, nullptr); // Sync current clipboard content with Scaleform
 #endif // CRY_PLATFORM_WINDOWS
 		pSystem->RegisterWindowMessageHandler(this);
 	}
@@ -170,6 +176,9 @@ CryGFxTextClipboard::~CryGFxTextClipboard()
 	if (gEnv && gEnv->pSystem)
 	{
 		gEnv->pSystem->UnregisterWindowMessageHandler(this);
+#if CRY_PLATFORM_WINDOWS
+		RemoveClipboardFormatListener(reinterpret_cast<HWND>(gEnv->pSystem->GetHWND()));
+#endif // CRY_PLATFORM_WINDOWS
 	}
 }
 
@@ -183,10 +192,12 @@ void CryGFxTextClipboard::OnTextStore(const wchar_t* szText, UPInt length)
 {
 #if CRY_PLATFORM_WINDOWS
 	// Copy to windows clipboard
-	if (OpenClipboard(nullptr) != 0)
+	if (!m_bSyncingClipboardFromWindows && OpenClipboard(nullptr) != 0)
 	{
+		const HWND hWnd = reinterpret_cast<HWND>(gEnv->pSystem->GetHWND());
+
 		// Avoid endless notification loop
-		RemoveClipboardFormatListener(reinterpret_cast<HWND>(gEnv->pSystem->GetHWND()));
+		RemoveClipboardFormatListener(hWnd);
 
 		static_assert(sizeof(wchar_t) == 2, "sizeof(wchar_t) needs to be 2 to be compatible with Scaleform.");
 		const HGLOBAL clipboardData = GlobalAlloc(GMEM_DDESHARE, sizeof(wchar_t) * (length + 1));
@@ -199,13 +210,13 @@ void CryGFxTextClipboard::OnTextStore(const wchar_t* szText, UPInt length)
 
 		CloseClipboard();
 
-		AddClipboardFormatListener(reinterpret_cast<HWND>(gEnv->pSystem->GetHWND()));
+		AddClipboardFormatListener(hWnd);
 	}
 #endif // CRY_PLATFORM_WINDOWS
 }
 
 #if CRY_PLATFORM_WINDOWS
-bool CryGFxTextClipboard::HandleMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT* pResult)
+bool CryGFxTextClipboard::HandleMessage(CRY_HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT* pResult)
 {
 	if (uMsg == WM_CLIPBOARDUPDATE)
 	{
@@ -215,7 +226,7 @@ bool CryGFxTextClipboard::HandleMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 			const HANDLE wideData = GetClipboardData(CF_UNICODETEXT);
 			if (wideData)
 			{
-				const LPCWSTR pWideData = (LPCWSTR)GlobalLock(wideData);
+				const LPCWSTR pWideData = reinterpret_cast<LPCWSTR>(GlobalLock(wideData));
 				if (pWideData)
 				{
 					// Note: This conversion is just to make sure we discard malicious or malformed data
@@ -225,7 +236,9 @@ bool CryGFxTextClipboard::HandleMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 			}
 			CloseClipboard();
 
+			m_bSyncingClipboardFromWindows = true;
 			SetText(data.c_str(), data.size());
+			m_bSyncingClipboardFromWindows = false;
 		}
 	}
 
@@ -347,19 +360,10 @@ CryGFxLog::~CryGFxLog()
 
 void CryGFxLog::LogMessageVarg(LogMessageType messageType, const char* pFmt, va_list argList)
 {
-	char logBuf[1024];
+	char logBuf[1024] = "<Flash> ";
 	{
-		const char prefix[] = "<Flash> ";
-
-		static_assert(sizeof(prefix) + 128 <= sizeof(logBuf), "Invalid array size!");
-
-		// prefix
-		{
-			cry_strcpy(logBuf, prefix);
-		}
-
 		// msg
-		size_t len = sizeof(prefix) - 1;
+		size_t len = strlen(logBuf);
 		{
 			cry_vsprintf(&logBuf[len], sizeof(logBuf) - len, pFmt, argList);
 			len = strlen(logBuf);
@@ -519,34 +523,20 @@ CryGFxImageCreator::~CryGFxImageCreator()
 
 GImageInfoBase* CryGFxImageCreator::CreateImage(const GFxImageCreateInfo& info)
 {
-	GImageInfoBase* pImageInfo(0);
+	GImageInfoBase* pImageInfo = nullptr;
 	switch (info.Type)
 	{
 	case GFxImageCreateInfo::Input_Image:
+		// create image info and texture for internal image
+		pImageInfo = new GImageInfoXRender(info.pImage);
+		break;
 	case GFxImageCreateInfo::Input_File:
-		{
-			switch (info.Type)
-			{
-			case GFxImageCreateInfo::Input_Image:
-				{
-					// create image info and texture for internal image
-					pImageInfo = new GImageInfoXRender(info.pImage);
-					break;
-				}
-			case GFxImageCreateInfo::Input_File:
-				{
-					// create image info and texture for external image
-					pImageInfo = new GImageInfoFileXRender(info.pFileInfo->FileName.ToCStr(), info.pFileInfo->TargetWidth, info.pFileInfo->TargetHeight);
-					break;
-				}
-			}
-			break;
-		}
+		// create image info and texture for external image
+		pImageInfo = new GImageInfoFileXRender(info.pFileInfo->FileName.ToCStr(), info.pFileInfo->TargetWidth, info.pFileInfo->TargetHeight);
+		break;
 	default:
-		{
-			assert(0);
-			break;
-		}
+		CRY_ASSERT_MESSAGE(false, "Invalid image info");
+		break;
 	}
 	return pImageInfo;
 }
@@ -580,6 +570,7 @@ static bool LookupDDS(const char* pFilePath, uint32& width, uint32& height)
 	}
 	else
 	{
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 		CryStackStringT<char, 256> splitFilePath(pFilePath);
 		splitFilePath += ".0";
 

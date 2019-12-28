@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -20,24 +20,19 @@ class CEntityComponentLuaScript final : public IEntityScriptComponent
 	CRY_ENTITY_COMPONENT_CLASS_GUID(CEntityComponentLuaScript, IEntityScriptComponent, "CEntityComponentLuaScript", "38cf87cc-d44b-4a1d-a16d-7ea3c5bde757"_cry_guid);
 
 	CEntityComponentLuaScript();
-	virtual ~CEntityComponentLuaScript() override;
+	virtual ~CEntityComponentLuaScript() override = default;
 
 public:
 
-	virtual void Initialize() final;
+	virtual void Initialize() final {}
 
 	//////////////////////////////////////////////////////////////////////////
 	// IEntityComponent interface implementation.
 	//////////////////////////////////////////////////////////////////////////
-	virtual void   ProcessEvent(SEntityEvent& event) final;
-	virtual uint64 GetEventMask() const final; // Need all events except pre-physics update
-	//////////////////////////////////////////////////////////////////////////
-
-	//////////////////////////////////////////////////////////////////////////
-	// IEntityComponent implementation.
-	//////////////////////////////////////////////////////////////////////////
+	virtual void   ProcessEvent(const SEntityEvent& event) final;
+	virtual Cry::Entity::EventFlags GetEventMask() const final; // Need all events except pre-physics update
 	virtual EEntityProxy GetProxyType() const final { return ENTITY_PROXY_SCRIPT; }
-	virtual void         Release()  final           { delete this; };
+	virtual void         Release()  final           { delete this; }
 	virtual void         LegacySerializeXML(XmlNodeRef& entityNode, XmlNodeRef& componentNode, bool bLoading) override final;
 	virtual void         GameSerialize(TSerialize ser) final;
 	virtual bool         NeedGameSerialize() final;
@@ -46,8 +41,8 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	// IEntityScriptComponent implementation.
 	//////////////////////////////////////////////////////////////////////////
-	virtual void          SetScriptUpdateRate(float fUpdateEveryNSeconds) final { m_fScriptUpdateRate = fUpdateEveryNSeconds; };
-	virtual IScriptTable* GetScriptTable() final                                { return m_pThis; };
+	virtual void          SetScriptUpdateRate(float fUpdateEveryNSeconds) final { m_fScriptUpdateRate = fUpdateEveryNSeconds; }
+	virtual IScriptTable* GetScriptTable() final                                { return m_pThis; }
 
 	virtual void          CallEvent(const char* sEvent) final;
 	virtual void          CallEvent(const char* sEvent, float fValue) final;
@@ -68,20 +63,17 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 
 	virtual void OnCollision(CEntity* pTarget, int matId, const Vec3& pt, const Vec3& n, const Vec3& vel, const Vec3& targetVel, int partId, float mass) final;
-	virtual void OnPreparedFromPool() final;
 
 	//////////////////////////////////////////////////////////////////////////
 	// State Management public interface.
 	//////////////////////////////////////////////////////////////////////////
 	virtual bool        GotoState(const char* sStateName) final;
-	virtual bool        GotoStateId(int nState) final { return GotoState(nState); };
+	virtual bool        GotoStateId(int nState) final { return GotoState(nState); }
 	bool                GotoState(int nState);
 	virtual bool        IsInState(const char* sStateName) final;
 	bool                IsInState(int nState);
 	virtual const char* GetState() final;
 	virtual int         GetStateId() final;
-	void                RegisterForAreaEvents(bool bEnable);
-	bool                IsRegisteredForAreaEvents() const;
 
 	virtual void        SetPhysParams(int type, IScriptTable* params) final;
 
@@ -89,22 +81,23 @@ public:
 
 	virtual void        GetMemoryUsage(ICrySizer* pSizer) const final;
 
-	bool                IsUpdateEnabled() const { return m_bUpdateEnabledOverride; }
+	bool                IsUpdateEnabled() const { return m_isUpdateEnabled; }
+
+	void                RegisterForAreaEvents(bool enable) { m_enableSoundAreaEvents = enable; }
 
 private:
-	SScriptState*  CurrentState() { return m_pScript->GetState(m_nCurrStateId); }
+	SScriptState*  CurrentState() { return m_pScript->GetState(m_currentStateId); }
 	void           CreateScriptTable(SEntitySpawnParams* pSpawnParams);
 	void           SetEventTargets(XmlNodeRef& eventTargets);
 	IScriptSystem* GetIScriptSystem() const { return gEnv->pScriptSystem; }
 
 	void           SerializeTable(TSerialize ser, const char* name);
-	bool           HaveTable(const char* name);
 
 	void           Update(SEntityUpdateContext& ctx);
 
 private:
 	CEntityScript* m_pScript;
-	IScriptTable*  m_pThis;
+	_smart_ptr<IScriptTable> m_pThis;
 
 	float          m_fScriptUpdateTimer;
 	float          m_fScriptUpdateRate;
@@ -112,10 +105,10 @@ private:
 	// Cache Tables.
 	SmartScriptTable m_hitTable;
 
-	uint32           m_nCurrStateId           : 8;
+	uint8 m_currentStateId;
 	// Whether or not the script implemented an OnUpdate function
-	bool             m_bUpdateFuncImplemented : 1;
+	uint8 m_implementedUpdateFunction : 1;
 	// Whether or not the user requested that update be disabled for this script component
-	bool             m_bUpdateEnabledOverride : 1;
-	bool             m_bEnableSoundAreaEvents : 1;
+	uint8 m_isUpdateEnabled : 1;
+	uint8 m_enableSoundAreaEvents : 1;
 };

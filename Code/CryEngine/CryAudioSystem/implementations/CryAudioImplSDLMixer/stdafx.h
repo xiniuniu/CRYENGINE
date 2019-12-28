@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -8,15 +8,3 @@
 #include <CryCore/StlUtils.h>
 #include <CryCore/Project/ProjectDefines.h>
 #include <CrySystem/ISystem.h>
-
-#if !defined(_RELEASE)
-	#define INCLUDE_SDLMIXER_IMPL_PRODUCTION_CODE
-	#define ENABLE_AUDIO_LOGGING
-#endif // _RELEASE
-
-#include <AudioLogger.h>
-
-namespace CryAudio
-{
-extern CLogger g_implLogger;
-} // namespace CryAudio

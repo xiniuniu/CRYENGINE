@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System;
 
@@ -6,32 +6,62 @@ using CryEngine.Common;
 
 namespace CryEngine.Animations
 {
-	// This mirrors EResumeFlags in ICryMannequin.h
 	/// <summary>
-	/// Flags for definining the behaviour when Resume is being called on an <see cref="ActionController"/>.
+	/// Flags for defining the behaviour when Resume is being called on an <see cref="ActionController"/>.
 	/// </summary>
 	[Flags]
-	public enum ResumeFlags
+	public enum ResumeFlags : uint
 	{
-		RestartAnimations              = 1,
-		RestoreLoopingAnimationTime    = 2,
-		RestoreNonLoopingAnimationTime = 4,
-		Default                        = RestartAnimations | RestoreLoopingAnimationTime | RestoreNonLoopingAnimationTime
+		/// <summary>
+		/// Restart the animations when resuming.
+		/// </summary>
+		RestartAnimations = IActionController.EResumeFlags.ERF_RestartAnimations,
+		/// <summary>
+		/// Preserves the progress for looping animations when restarting.
+		/// </summary>
+		RestoreLoopingAnimationTime = IActionController.EResumeFlags.ERF_RestoreLoopingAnimationTime,
+		/// <summary>
+		/// Preserves the progress for non-looping animations when restarting.
+		/// </summary>
+		RestoreNonLoopingAnimationTime = IActionController.EResumeFlags.ERF_RestoreNonLoopingAnimationTime,
+		/// <summary>
+		/// Restarts the animations and preserves the progress for all animations.
+		/// </summary>
+		Default = IActionController.EResumeFlags.ERF_Default
 	}
 
 	/// <summary>
 	/// Flags to set various options on the <see cref="ActionController"/>.
 	/// </summary>
 	[Flags]
-	public enum ActionControllerFlags
+	public enum ActionControllerFlags : uint
 	{
+		/// <summary>
+		/// Flag indicating that the <see cref="ActionController"/> is paused.
+		/// </summary>
 		PausedUpdate = EActionControllerFlags.AC_PausedUpdate,
+		/// <summary>
+		/// Flag indicating that the <see cref="ActionController"/> should draw debug information.
+		/// </summary>
 		DebugDraw = EActionControllerFlags.AC_DebugDraw,
+		/// <summary>
+		/// Flag indicating that the <see cref="ActionController"/> will dump it's state on update. Disables itself after dumping the state.
+		/// </summary>
 		DumpState = EActionControllerFlags.AC_DumpState,
+		/// <summary>
+		/// Flag indicating that the <see cref="ActionController"/> is currently being updated.
+		/// </summary>
 		IsInUpdate = EActionControllerFlags.AC_IsInUpdate,
+		/// <summary>
+		/// Flag indicating to not blend transitions in blend queries.
+		/// </summary>
 		NoTransitions = EActionControllerFlags.AC_NoTransitions
 	}
 
+	/// <summary>
+	/// The root object controlling mannequin for a character. It is configured using a controller definition (defining the fragmentIDs, scopes, scope contexts, etc). 
+	/// It schedules actions onto scopes and holds the global tag state.
+	/// </summary>
 	public sealed class ActionController
 	{
 		/// <summary>
@@ -63,7 +93,7 @@ namespace CryEngine.Animations
 		/// The ID of the <see cref="CryEngine.Entity"/> that this <see cref="ActionController"/> belongs to.
 		/// </summary>
 		/// <value>The ID of the entity identifier.</value>
-		public EntitySystem.EntityId EntityId
+		public EntityId EntityId
 		{
 			get
 			{
@@ -100,6 +130,7 @@ namespace CryEngine.Animations
 			}
 		}
 
+		[SerializeValue]
 		internal IActionController NativeHandle { get; private set; }
 
 		internal ActionController(IActionController actionController)

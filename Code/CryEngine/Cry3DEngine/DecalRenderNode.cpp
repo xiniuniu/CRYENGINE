@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DecalRenderNode.h"
@@ -83,10 +83,13 @@ void CDecalRenderNode::CreateDecalOnStaticObjects()
 	CVisAreaManager* pVisAreaManager(GetVisAreaManager());
 	PodArray<SRNInfo> decalReceivers;
 
-	if (pTerrain && m_pOcNode && !m_pOcNode->m_pVisArea)
-		pTerrain->GetObjectsAround(m_decalProperties.m_pos, m_decalProperties.m_radius, &decalReceivers, true, false);
-	else if (pVisAreaManager && m_pOcNode && m_pOcNode->m_pVisArea)
-		pVisAreaManager->GetObjectsAround(m_decalProperties.m_pos, m_decalProperties.m_radius, &decalReceivers, true);
+	if (GetEntityVisArea())
+	{
+		if (pTerrain)
+			pTerrain->GetObjectsAround(m_decalProperties.m_pos, m_decalProperties.m_radius, &decalReceivers, true, false);
+		else if (pVisAreaManager)
+			pVisAreaManager->GetObjectsAround(m_decalProperties.m_pos, m_decalProperties.m_radius, &decalReceivers, true);
+	}
 
 	// delete vegetations
 	for (int nRecId(0); nRecId < decalReceivers.Count(); ++nRecId)
@@ -177,7 +180,7 @@ void CDecalRenderNode::CreateDecalOnStaticObjects()
 
 void CDecalRenderNode::CreateDecalOnTerrain()
 {
-	float terrainHeight(GetTerrain()->GetZApr(m_decalProperties.m_pos.x, m_decalProperties.m_pos.y, m_nSID));
+	float terrainHeight(GetTerrain()->GetZApr(m_decalProperties.m_pos.x, m_decalProperties.m_pos.y));
 	float terrainDelta(m_decalProperties.m_pos.z - terrainHeight);
 	if (terrainDelta < m_decalProperties.m_radius && terrainDelta > -0.5f)
 	{
@@ -373,7 +376,7 @@ void CDecalRenderNode::SetDecalProperties(const SDecalProperties& properties)
 		const float thickness = 0.01f;
 		geom_world_data gwd[2];
 		gwd[0].offset = m_Matrix.GetTranslation();
-		gwd[0].v = m_Matrix.TransformVector(Vec3(0, 0, 1));
+		gwd[0].v = m_Matrix.TransformVector(Vec3(0, 0, 1)).GetNormalized();
 		primitives::cylinder cyl;
 
 		Vec2_tpl<uint16> sz;
@@ -554,7 +557,12 @@ IRenderNode* CDecalRenderNode::Clone() const
 
 void CDecalRenderNode::SetMatrix(const Matrix34& mat)
 {
-	m_pos = mat.GetTranslation();
+	Vec3 translation = mat.GetTranslation();
+	if (m_pos == translation)
+		return;
+
+	m_pos = translation;
+	m_Matrix.SetTranslation(translation);
 
 	if (m_decalProperties.m_projectionType == SDecalProperties::ePlanar)
 		m_WSBBox.SetTransformedAABB(m_Matrix, AABB(-Vec3(1, 1, 0.5f), Vec3(1, 1, 0.5f)));
@@ -566,6 +574,9 @@ void CDecalRenderNode::SetMatrix(const Matrix34& mat)
 
 void CDecalRenderNode::SetMatrixFull(const Matrix34& mat)
 {
+	if (m_Matrix == mat)
+		return;
+
 	m_Matrix = mat;
 	m_pos = mat.GetTranslation();
 
@@ -588,6 +599,8 @@ const char* CDecalRenderNode::GetName() const
 void CDecalRenderNode::Render(const SRendParams& rParam, const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
+
+	DBG_LOCK_TO_THREAD(this);
 
 	if (!passInfo.RenderDecals())
 		return; // false;
@@ -699,17 +712,7 @@ void CDecalRenderNode::OffsetPosition(const Vec3& delta)
 	m_Matrix.SetTranslation(m_Matrix.GetTranslation() + delta);
 }
 
-void CDecalRenderNode::FillBBox(AABB& aabb)
-{
-	aabb = CDecalRenderNode::GetBBox();
-}
-
-EERType CDecalRenderNode::GetRenderNodeType()
-{
-	return eERType_Decal;
-}
-
-float CDecalRenderNode::GetMaxViewDist()
+float CDecalRenderNode::GetMaxViewDist() const
 {
 	float fMatScale = m_Matrix.GetColumn0().GetLength();
 

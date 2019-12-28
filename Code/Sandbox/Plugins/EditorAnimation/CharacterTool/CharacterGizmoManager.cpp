@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
@@ -7,8 +7,8 @@
 #include "CharacterDocument.h"
 #include "AnimationContent.h"
 #include "Expected.h"
-#include <Serialization/QPropertyTree/QPropertyTree.h>
-#include "../../EditorCommon/QPropertyTree/ContextList.h"
+#include <Serialization/QPropertyTreeLegacy/QPropertyTreeLegacy.h>
+#include "QPropertyTreeLegacy/ContextList.h"
 #include "GizmoSink.h"
 #include "SceneContent.h"
 #include "AnimationList.h"
@@ -28,20 +28,18 @@ CharacterGizmoManager::CharacterGizmoManager(System* system)
 	m_trees.resize(GIZMO_LAYER_COUNT);
 	for (int i = 0; i < GIZMO_LAYER_COUNT; ++i)
 	{
-		unique_ptr<QPropertyTree>& tree = m_trees[i];
-		tree.reset(new QPropertyTree(0));
-		PropertyTreeStyle treeStyle(QPropertyTree::defaultTreeStyle());
+		unique_ptr<QPropertyTreeLegacy>& tree = m_trees[i];
+		tree.reset(new QPropertyTreeLegacy(0));
+		PropertyTreeStyle treeStyle(QPropertyTreeLegacy::defaultTreeStyle());
 		treeStyle.propertySplitter = false;
 		treeStyle.groupRectangle = false;
 		tree->setTreeStyle(treeStyle);
 		tree->setUndoEnabled(false);
 		tree->setArchiveContext(m_contextList->Tail());
 
-		EXPECTED(connect(tree.get(), &QPropertyTree::signalAboutToSerialize, this, &CharacterGizmoManager::OnTreeAboutToSerialize));
-		EXPECTED(connect(tree.get(), &QPropertyTree::signalSerialized, this, &CharacterGizmoManager::OnTreeSerialized));
+		EXPECTED(connect(tree.get(), &QPropertyTreeLegacy::signalAboutToSerialize, this, &CharacterGizmoManager::OnTreeAboutToSerialize));
+		EXPECTED(connect(tree.get(), &QPropertyTreeLegacy::signalSerialized, this, &CharacterGizmoManager::OnTreeSerialized));
 	}
-
-	m_trees[GIZMO_LAYER_SCENE]->attach(Serialization::SStruct(*system->scene));
 
 	EXPECTED(connect(system->document.get(), SIGNAL(SignalActiveCharacterChanged()), SLOT(OnActiveCharacterChanged())));
 	EXPECTED(connect(system->document.get(), SIGNAL(SignalCharacterLoaded()), SLOT(OnActiveCharacterChanged())));
@@ -128,10 +126,14 @@ void CharacterGizmoManager::OnExplorerEntryModified(ExplorerEntryModifyEvent& ev
 	}
 }
 
-QPropertyTree* CharacterGizmoManager::Tree(GizmoLayer layer)
+QPropertyTreeLegacy* CharacterGizmoManager::Tree(GizmoLayer layer)
 {
 	if (size_t(layer) >= m_trees.size())
 		return 0;
+
+	if(layer == GIZMO_LAYER_SCENE && !m_trees[GIZMO_LAYER_SCENE]->attached())
+		m_trees[GIZMO_LAYER_SCENE]->attach(Serialization::SStruct(*m_system->scene));
+
 	return m_trees[size_t(layer)].get();
 }
 
@@ -165,7 +167,7 @@ void CharacterGizmoManager::ReadGizmos()
 {
 	for (int i = 0; i < (int)m_trees.size(); ++i)
 	{
-		QPropertyTree* tree = m_trees[i].get();
+		QPropertyTreeLegacy* tree = m_trees[i].get();
 		if (!tree)
 			continue;
 		tree->revert();

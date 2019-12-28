@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "EntityAudioProxy.h"
@@ -8,7 +8,7 @@
 
 CRYREGISTER_CLASS(CEntityComponentAudio);
 
-CEntityComponentAudio::AuxObjectPair CEntityComponentAudio::s_nullAuxObjectPair(CryAudio::InvalidAuxObjectId, static_cast<CryAudio::IObject*>(nullptr));
+CEntityComponentAudio::AuxObjectPair CEntityComponentAudio::s_nullAuxObjectPair(CryAudio::InvalidAuxObjectId, SAuxObjectWrapper(nullptr));
 
 //////////////////////////////////////////////////////////////////////////
 CEntityComponentAudio::CEntityComponentAudio()
@@ -41,13 +41,19 @@ void CEntityComponentAudio::Initialize()
 //////////////////////////////////////////////////////////////////////////
 void CEntityComponentAudio::OnMove()
 {
-	Matrix34 const& tm = m_pEntity->GetWorldTM();
-	CRY_ASSERT_MESSAGE(tm.IsValid(), "Invalid Matrix34 during CEntityComponentAudio::OnMove");
+	Matrix34 const tm = GetWorldTransformMatrix();
+	CRY_ASSERT(tm.IsValid(), "Invalid Matrix34 during CEntityComponentAudio::OnMove");
 
 	if ((m_flags & eEntityAudioProxyFlags_CanMoveWithEntity) != 0)
 	{
 		std::for_each(m_mapAuxObjects.begin(), m_mapAuxObjects.end(), SRepositionAudioProxy(tm, CryAudio::SRequestUserData::GetEmptyObject()));
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntityComponentAudio::OnTransformChanged()
+{
+	OnMove();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -57,7 +63,7 @@ void CEntityComponentAudio::OnListenerMoveInside(Vec3 const& listenerPos)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentAudio::OnListenerExclusiveMoveInside(IEntity const* const __restrict pEntity, IEntity const* const __restrict pAreaHigh, IEntity const* const __restrict pAreaLow, float const fade)
+void CEntityComponentAudio::OnListenerExclusiveMoveInside(CEntity const* const __restrict pEntity, CEntity const* const __restrict pAreaHigh, CEntity const* const __restrict pAreaLow, float const fade)
 {
 	IEntityAreaComponent const* const __restrict pAreaProxyLow = static_cast<IEntityAreaComponent const* const __restrict>(pAreaLow->GetProxy(ENTITY_PROXY_AREA));
 	IEntityAreaComponent* const __restrict pAreaProxyHigh = static_cast<IEntityAreaComponent* const __restrict>(pAreaHigh->GetProxy(ENTITY_PROXY_AREA));
@@ -78,7 +84,7 @@ void CEntityComponentAudio::OnListenerExclusiveMoveInside(IEntity const* const _
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentAudio::OnListenerEnter(IEntity const* const pEntity)
+void CEntityComponentAudio::OnListenerEnter(CEntity const* const pEntity)
 {
 	m_pEntity->SetPos(pEntity->GetWorldPos());
 }
@@ -90,19 +96,13 @@ void CEntityComponentAudio::OnListenerMoveNear(Vec3 const& closestPointToArea)
 }
 
 //////////////////////////////////////////////////////////////////////////
-uint64 CEntityComponentAudio::GetEventMask() const
+Cry::Entity::EventFlags CEntityComponentAudio::GetEventMask() const
 {
-	return
-	  BIT64(ENTITY_EVENT_XFORM) |
-	  BIT64(ENTITY_EVENT_ENTERAREA) |
-	  BIT64(ENTITY_EVENT_MOVENEARAREA) |
-	  BIT64(ENTITY_EVENT_ENTERNEARAREA) |
-	  BIT64(ENTITY_EVENT_MOVEINSIDEAREA) |
-	  BIT64(ENTITY_EVENT_SET_NAME);
+	return ENTITY_EVENT_XFORM | ENTITY_EVENT_ENTERAREA | ENTITY_EVENT_MOVENEARAREA | ENTITY_EVENT_ENTERNEARAREA | ENTITY_EVENT_MOVEINSIDEAREA | ENTITY_EVENT_SET_NAME;
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentAudio::ProcessEvent(SEntityEvent& event)
+void CEntityComponentAudio::ProcessEvent(const SEntityEvent& event)
 {
 	if (m_pEntity != nullptr)
 	{
@@ -124,7 +124,7 @@ void CEntityComponentAudio::ProcessEvent(SEntityEvent& event)
 				if ((m_pEntity->GetFlags() & ENTITY_FLAG_VOLUME_SOUND) > 0)
 				{
 					EntityId const entityId = static_cast<EntityId>(event.nParam[0]); // Entering entity!
-					IEntity* const pIEntity = gEnv->pEntitySystem->GetEntity(entityId);
+					CEntity* const pIEntity = g_pIEntitySystem->GetEntityFromID(entityId);
 
 					if ((pIEntity != nullptr) && (pIEntity->GetFlagsExtended() & ENTITY_FLAG_EXTENDED_AUDIO_LISTENER) > 0)
 					{
@@ -140,7 +140,7 @@ void CEntityComponentAudio::ProcessEvent(SEntityEvent& event)
 				if ((m_pEntity->GetFlags() & ENTITY_FLAG_VOLUME_SOUND) > 0)
 				{
 					EntityId const entityId = static_cast<EntityId>(event.nParam[0]); // Near entering/moving entity!
-					IEntity* const pIEntity = gEnv->pEntitySystem->GetEntity(entityId);
+					CEntity* const pIEntity = g_pIEntitySystem->GetEntityFromID(entityId);
 
 					if (pIEntity != nullptr)
 					{
@@ -158,15 +158,15 @@ void CEntityComponentAudio::ProcessEvent(SEntityEvent& event)
 				if ((m_pEntity->GetFlags() & ENTITY_FLAG_VOLUME_SOUND) > 0)
 				{
 					EntityId const entityId = static_cast<EntityId>(event.nParam[0]); // Inside moving entity!
-					IEntity* const __restrict pIEntity = gEnv->pEntitySystem->GetEntity(entityId);
+					CEntity* const __restrict pIEntity = g_pIEntitySystem->GetEntityFromID(entityId);
 
 					if (pIEntity != nullptr)
 					{
 						EntityId const area1Id = static_cast<EntityId>(event.nParam[2]); // AreaEntityID (low)
 						EntityId const area2Id = static_cast<EntityId>(event.nParam[3]); // AreaEntityID (high)
 
-						IEntity* const __restrict pArea1 = gEnv->pEntitySystem->GetEntity(area1Id);
-						IEntity* const __restrict pArea2 = gEnv->pEntitySystem->GetEntity(area2Id);
+						CEntity* const __restrict pArea1 = g_pIEntitySystem->GetEntityFromID(area1Id);
+						CEntity* const __restrict pArea2 = g_pIEntitySystem->GetEntityFromID(area2Id);
 
 						if (pArea1 != nullptr)
 						{
@@ -222,7 +222,11 @@ void CEntityComponentAudio::GameSerialize(TSerialize ser)
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CEntityComponentAudio::PlayFile(CryAudio::SPlayFileInfo const& playbackInfo, CryAudio::AuxObjectId const audioAuxObjectId /* = DefaultAuxObjectId */, CryAudio::SRequestUserData const& userData /* = SAudioRequestUserData::GetEmptyObject() */)
+bool CEntityComponentAudio::ExecuteTrigger(
+	CryAudio::ControlId const audioTriggerId,
+	CryAudio::AuxObjectId const audioAuxObjectId /* = DefaultAuxObjectId */,
+	EntityId const entityId /*= INVALID_ENTITYID*/,
+	CryAudio::SRequestUserData const& userData /* = SAudioRequestUserData::GetEmptyObject() */)
 {
 	if (m_pEntity != nullptr)
 	{
@@ -232,33 +236,39 @@ bool CEntityComponentAudio::PlayFile(CryAudio::SPlayFileInfo const& playbackInfo
 
 			if (audioObjectPair.first != CryAudio::InvalidAuxObjectId)
 			{
-				(SPlayFile(playbackInfo, userData))(audioObjectPair);
+				audioObjectPair.second.pIObject->ExecuteTrigger(audioTriggerId, entityId, userData);
 				return true;
 			}
 #if defined(INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE)
 			else
 			{
-				gEnv->pSystem->Warning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, VALIDATOR_FLAG_AUDIO, nullptr, "<Audio> Could not find AuxAudioProxy with id '%u' on entity '%s' to PlayFile '%s'", audioAuxObjectId, m_pEntity->GetEntityTextDescription().c_str(), playbackInfo.szFile);
+				gEnv->pSystem->Warning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, VALIDATOR_FLAG_AUDIO, nullptr, "<Audio> Could not find AuxAudioProxy with id '%u' on entity '%s' to ExecuteTrigger '%u'", audioAuxObjectId, m_pEntity->GetEntityTextDescription().c_str(), audioTriggerId);
 			}
 #endif  // INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE
 		}
 		else
 		{
-			std::for_each(m_mapAuxObjects.begin(), m_mapAuxObjects.end(), SPlayFile(playbackInfo, userData));
+			for (auto const& auxObjectPair : m_mapAuxObjects)
+			{
+				auxObjectPair.second.pIObject->ExecuteTrigger(audioTriggerId, entityId, userData);
+			}
 			return !m_mapAuxObjects.empty();
 		}
 	}
 	else
 	{
-		gEnv->pSystem->Warning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, VALIDATOR_FLAG_AUDIO, nullptr, "<Audio> Trying to play an audio file on an EntityAudioProxy without a valid entity!");
+		gEnv->pSystem->Warning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, VALIDATOR_FLAG_AUDIO, nullptr, "<Audio> Trying to execute an audio trigger on an EntityAudioProxy without a valid entity!");
 	}
+
 	return false;
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentAudio::StopFile(
-  char const* const szFile,
-  CryAudio::AuxObjectId const audioAuxObjectId /*= DefaultAuxObjectId*/)
+bool CEntityComponentAudio::ExecuteTriggerWithCallbacks(
+	CryAudio::STriggerCallbackData const& callbackData,
+	CryAudio::AuxObjectId const audioAuxObjectId /* = DefaultAuxObjectId */,
+	EntityId const entityId /*= INVALID_ENTITYID*/,
+	CryAudio::SRequestUserData const& userData /* = SAudioRequestUserData::GetEmptyObject() */)
 {
 	if (m_pEntity != nullptr)
 	{
@@ -268,56 +278,23 @@ void CEntityComponentAudio::StopFile(
 
 			if (audioObjectPair.first != CryAudio::InvalidAuxObjectId)
 			{
-				(SStopFile(szFile))(audioObjectPair);
+				audioObjectPair.second.pIObject->ExecuteTriggerWithCallbacks(callbackData, entityId, userData);
+				return true;
 			}
+#if defined(INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE)
+			else
+			{
+				gEnv->pSystem->Warning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, VALIDATOR_FLAG_AUDIO, nullptr, "<Audio> Could not find AuxAudioProxy with id '%u' on entity '%s' to execute trigger with id '%u'", audioAuxObjectId, m_pEntity->GetEntityTextDescription().c_str(), callbackData.triggerId);
+			}
+#endif  // INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE
 		}
 		else
 		{
-			std::for_each(m_mapAuxObjects.begin(), m_mapAuxObjects.end(), SStopFile(szFile));
-		}
-	}
-	else
-	{
-		gEnv->pSystem->Warning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, VALIDATOR_FLAG_AUDIO, nullptr, "<Audio> Trying to stop an audio file on an EntityAudioProxy without a valid entity!");
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-bool CEntityComponentAudio::ExecuteTrigger(
-  CryAudio::ControlId const audioTriggerId,
-  CryAudio::AuxObjectId const audioAuxObjectId /* = DefaultAuxObjectId */,
-  CryAudio::SRequestUserData const& userData /* = SAudioRequestUserData::GetEmptyObject() */)
-{
-	if (m_pEntity != nullptr)
-	{
-		if ((m_pEntity->GetFlagsExtended() & ENTITY_FLAG_EXTENDED_AUDIO_DISABLED) == 0)
-		{
-			if (audioAuxObjectId != CryAudio::InvalidAuxObjectId)
+			for (auto const& auxObjectPair : m_mapAuxObjects)
 			{
-				AuxObjectPair const& audioObjectPair = GetAudioAuxObjectPair(audioAuxObjectId);
-
-				if (audioObjectPair.first != CryAudio::InvalidAuxObjectId)
-				{
-					(SRepositionAudioProxy(m_pEntity->GetWorldTM(), userData))(audioObjectPair);
-					audioObjectPair.second.pIObject->ExecuteTrigger(audioTriggerId, userData);
-					return true;
-				}
-#if defined(INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE)
-				else
-				{
-					gEnv->pSystem->Warning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, VALIDATOR_FLAG_AUDIO, nullptr, "<Audio> Could not find AuxAudioProxy with id '%u' on entity '%s' to ExecuteTrigger '%u'", audioAuxObjectId, m_pEntity->GetEntityTextDescription().c_str(), audioTriggerId);
-				}
-#endif  // INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE
+				auxObjectPair.second.pIObject->ExecuteTriggerWithCallbacks(callbackData, entityId, userData);
 			}
-			else
-			{
-				for (auto const& auxObjectPair : m_mapAuxObjects)
-				{
-					(SRepositionAudioProxy(m_pEntity->GetWorldTM(), userData))(auxObjectPair);
-					auxObjectPair.second.pIObject->ExecuteTrigger(audioTriggerId, userData);
-				}
-				return !m_mapAuxObjects.empty();
-			}
+			return !m_mapAuxObjects.empty();
 		}
 	}
 	else
@@ -330,9 +307,9 @@ bool CEntityComponentAudio::ExecuteTrigger(
 
 //////////////////////////////////////////////////////////////////////////
 void CEntityComponentAudio::StopTrigger(
-  CryAudio::ControlId const audioTriggerId,
-  CryAudio::AuxObjectId const audioAuxObjectId /* = DefaultAuxObjectId */,
-  CryAudio::SRequestUserData const& userData /* = SAudioRequestUserData::GetEmptyObject() */)
+	CryAudio::ControlId const audioTriggerId,
+	CryAudio::AuxObjectId const audioAuxObjectId /* = DefaultAuxObjectId */,
+	CryAudio::SRequestUserData const& userData /* = SAudioRequestUserData::GetEmptyObject() */)
 {
 	if (audioAuxObjectId != CryAudio::InvalidAuxObjectId)
 	{
@@ -404,6 +381,24 @@ void CEntityComponentAudio::SetObstructionCalcType(CryAudio::EOcclusionType cons
 }
 
 //////////////////////////////////////////////////////////////////////////
+void CEntityComponentAudio::SetOcclusionRayOffset(float const offset, CryAudio::AuxObjectId const audioAuxObjectId /*= CryAudio::DefaultAuxObjectId*/)
+{
+	if (audioAuxObjectId != CryAudio::InvalidAuxObjectId)
+	{
+		AuxObjectPair const& audioObjectPair = GetAudioAuxObjectPair(audioAuxObjectId);
+
+		if (audioObjectPair.first != CryAudio::InvalidAuxObjectId)
+		{
+			(SSetOcclusionRayOffset(offset))(audioObjectPair);
+		}
+	}
+	else
+	{
+		std::for_each(m_mapAuxObjects.begin(), m_mapAuxObjects.end(), SSetOcclusionRayOffset(offset));
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
 void CEntityComponentAudio::SetEnvironmentAmount(CryAudio::EnvironmentId const audioEnvironmentId, float const amount, CryAudio::AuxObjectId const audioAuxObjectId /*= DEFAULT_AUDIO_PROXY_ID*/)
 {
 	if (audioAuxObjectId != CryAudio::InvalidAuxObjectId)
@@ -453,7 +448,7 @@ void CEntityComponentAudio::AudioAuxObjectsMoveWithEntity(bool const bCanMoveWit
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentAudio::AddAsListenerToAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (* func)(CryAudio::SRequestInfo const* const), CryAudio::ESystemEvents const eventMask)
+void CEntityComponentAudio::AddAsListenerToAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const), CryAudio::ESystemEvents const eventMask)
 {
 	AuxObjects::const_iterator const iter(m_mapAuxObjects.find(audioAuxObjectId));
 
@@ -464,7 +459,7 @@ void CEntityComponentAudio::AddAsListenerToAudioAuxObject(CryAudio::AuxObjectId 
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentAudio::RemoveAsListenerFromAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (* func)(CryAudio::SRequestInfo const* const))
+void CEntityComponentAudio::RemoveAsListenerFromAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const))
 {
 	AuxObjects::const_iterator const iter(m_mapAuxObjects.find(audioAuxObjectId));
 
@@ -515,7 +510,6 @@ float CEntityComponentAudio::GetGreatestFadeDistance() const
 //////////////////////////////////////////////////////////////////////////
 CryAudio::AuxObjectId CEntityComponentAudio::CreateAudioAuxObject()
 {
-	CryAudio::AuxObjectId audioAuxObjectId = CryAudio::InvalidAuxObjectId;
 	char const* szName = nullptr;
 
 #if defined(INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE)
@@ -541,12 +535,10 @@ CryAudio::AuxObjectId CEntityComponentAudio::CreateAudioAuxObject()
 	szName = name.c_str();
 #endif // INCLUDE_ENTITYSYSTEM_PRODUCTION_CODE
 
-	CryAudio::SCreateObjectData const objectData(szName, CryAudio::EOcclusionType::Ignore, m_pEntity->GetWorldTM(), m_pEntity->GetId(), true);
+	CryAudio::SCreateObjectData const objectData(szName, CryAudio::EOcclusionType::Ignore, m_pEntity->GetWorldTM(), true);
 	CryAudio::IObject* const pIObject = gEnv->pAudioSystem->CreateObject(objectData);
 	m_mapAuxObjects.insert(AuxObjectPair(++m_auxObjectIdCounter, SAuxObjectWrapper(pIObject)));
-	audioAuxObjectId = m_auxObjectIdCounter;
-
-	return audioAuxObjectId;
+	return m_auxObjectIdCounter;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -593,7 +585,7 @@ CEntityComponentAudio::AuxObjectPair& CEntityComponentAudio::GetAudioAuxObjectPa
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentAudio::SetEnvironmentAmountInternal(IEntity const* const pIEntity, float const amount) const
+void CEntityComponentAudio::SetEnvironmentAmountInternal(CEntity const* const pIEntity, float const amount) const
 {
 	// If the passed-in entity is our parent we skip it.
 	// Meaning we do not apply our own environment to ourselves.
@@ -612,14 +604,55 @@ void CEntityComponentAudio::SetEnvironmentAmountInternal(IEntity const* const pI
 }
 
 //////////////////////////////////////////////////////////////////////////
-CryAudio::AuxObjectId CEntityComponentAudio::GetAuxObjectIdFromAudioObject(CryAudio::IObject* pObject)
+void CEntityComponentAudio::ToggleAbsoluteVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId /* = CryAudio::DefaultAuxObjectId */, CryAudio::SRequestUserData const& userData /* = CryAudio::SRequestUserData::GetEmptyObject() */)
 {
-	for (auto const& auxObjectPair : m_mapAuxObjects)
+	if (audioAuxObjectId != CryAudio::InvalidAuxObjectId)
 	{
-		if (auxObjectPair.second.pIObject == pObject)
+		AuxObjectPair const& audioObjectPair = GetAudioAuxObjectPair(audioAuxObjectId);
+
+		if (audioObjectPair.first != CryAudio::InvalidAuxObjectId)
 		{
-			return auxObjectPair.first;
+			(SToggleAbsoluteVelocityTracking(enable))(audioObjectPair);
 		}
 	}
-	return CryAudio::InvalidAuxObjectId;
+	else
+	{
+		std::for_each(m_mapAuxObjects.begin(), m_mapAuxObjects.end(), SToggleAbsoluteVelocityTracking(enable));
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntityComponentAudio::ToggleRelativeVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId /* = CryAudio::DefaultAuxObjectId */, CryAudio::SRequestUserData const& userData /* = CryAudio::SRequestUserData::GetEmptyObject() */)
+{
+	if (audioAuxObjectId != CryAudio::InvalidAuxObjectId)
+	{
+		AuxObjectPair const& audioObjectPair = GetAudioAuxObjectPair(audioAuxObjectId);
+
+		if (audioObjectPair.first != CryAudio::InvalidAuxObjectId)
+		{
+			(SToggleRelativeVelocityTracking(enable))(audioObjectPair);
+		}
+	}
+	else
+	{
+		std::for_each(m_mapAuxObjects.begin(), m_mapAuxObjects.end(), SToggleRelativeVelocityTracking(enable));
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntityComponentAudio::AddListener(CryAudio::ListenerId const listenerId)
+{
+	for (auto const& objectPair : m_mapAuxObjects)
+	{
+		objectPair.second.pIObject->AddListener(listenerId);
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntityComponentAudio::RemoveListener(CryAudio::ListenerId const listenerId)
+{
+	for (auto const& objectPair : m_mapAuxObjects)
+	{
+		objectPair.second.pIObject->RemoveListener(listenerId);
+	}
 }

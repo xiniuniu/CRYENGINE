@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -16,14 +16,6 @@ namespace UQS
 		//===================================================================================
 
 		typedef CFactoryDatabase<IQueryFactory> QueryFactoryDatabase;
-
-		//===================================================================================
-		//
-		// QueryBaseUniquePtr
-		//
-		//===================================================================================
-
-		typedef std::unique_ptr<CQueryBase> QueryBaseUniquePtr;
 
 		//===================================================================================
 		//
@@ -50,14 +42,12 @@ namespace UQS
 			virtual QueryBaseUniquePtr          CreateQuery(const CQueryBase::SCtorContext& ctorContext) = 0;
 			virtual const Shared::CTypeInfo&    GetQueryBlueprintType(const CQueryBlueprint& queryBlueprint) const = 0;
 			virtual bool                        CheckOutputTypeCompatibilityAmongChildQueryBlueprints(const CQueryBlueprint& parentQueryBlueprint, string& error, size_t& childIndexCausingTheError) const = 0;
+			virtual const Shared::CTypeInfo*    GetShuttleTypeFromPrecedingQuery(const CQueryBlueprint& childQueryBlueprint) const = 0;
 
 			const Shared::CTypeInfo*            GetTypeOfShuttledItemsToExpect(const CQueryBlueprint& queryBlueprintAskingForThis) const;
 
 			static void                         InstantiateFactories();
-			static const CQueryFactoryBase&     GetDefaultQueryFactory();  // this may only be called after InstantiateFactories(); will assert() and crash otherwise
-
-		private:
-			virtual const Shared::CTypeInfo*    GetShuttleTypeFromPrecedingSibling(const CQueryBlueprint& childQueryBlueprint) const = 0;
+			static const CQueryFactoryBase&     GetDefaultQueryFactory();  // this may only be called after InstantiateFactories(); will CRY_ASSERT() and crash otherwise
 
 		protected:
 			explicit                            CQueryFactoryBase(const char* szName, const CryGUID& guid, const char* szDescription, bool bSupportsParameters, bool bRequiresGenerator, bool bSupportsEvaluators, size_t minRequiredChildren, size_t maxAllowedChildren);
@@ -88,11 +78,7 @@ namespace UQS
 			virtual QueryBaseUniquePtr          CreateQuery(const CQueryBase::SCtorContext& ctorContext) override;
 			virtual const Shared::CTypeInfo&    GetQueryBlueprintType(const CQueryBlueprint& queryBlueprint) const override;
 			virtual bool                        CheckOutputTypeCompatibilityAmongChildQueryBlueprints(const CQueryBlueprint& parentQueryBlueprint, string& error, size_t& childIndexCausingTheError) const override;
-			// ~CQueryFactoryBase
-
-		private:
-			// CQueryFactoryBase
-			virtual const Shared::CTypeInfo*    GetShuttleTypeFromPrecedingSibling(const CQueryBlueprint& childQueryBlueprint) const override;
+			virtual const Shared::CTypeInfo*    GetShuttleTypeFromPrecedingQuery(const CQueryBlueprint& childQueryBlueprint) const override;
 			// ~CQueryFactoryBase
 		};
 
@@ -100,7 +86,7 @@ namespace UQS
 		CQueryFactory<TQuery>::CQueryFactory(const char* szName, const CryGUID& guid, const char* szDescription, bool bSupportsParameters, bool bRequiresGenerator, bool bSupportsEvaluators, size_t minRequiredChildren, size_t maxAllowedChildren)
 			: CQueryFactoryBase(szName, guid, szDescription, bSupportsParameters, bRequiresGenerator, bSupportsEvaluators, minRequiredChildren, maxAllowedChildren)
 		{
-			assert(minRequiredChildren <= maxAllowedChildren);
+			CRY_ASSERT(minRequiredChildren <= maxAllowedChildren);
 		}
 
 		template <class TQuery>

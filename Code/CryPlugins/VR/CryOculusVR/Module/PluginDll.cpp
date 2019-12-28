@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PluginDll.h"
@@ -9,6 +9,7 @@
 // Included only once per DLL module.
 #include <CryCore/Platform/platform_impl.inl>
 #include <CrySystem/VR/IHMDManager.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 namespace CryVR
 {
@@ -21,7 +22,6 @@ namespace Oculus {
 	int CPlugin_OculusVR::s_hmd_projection = 0;
 	int CPlugin_OculusVR::s_hmd_perf_hud = 0;
 	float CPlugin_OculusVR::s_hmd_projection_screen_dist = 1.0f;
-	int CPlugin_OculusVR::s_hmd_post_inject_camera = 0;
 
 CPlugin_OculusVR::~CPlugin_OculusVR()
 {
@@ -73,12 +73,6 @@ bool CPlugin_OculusVR::Initialize(SSystemGlobalEnvironment& env, const SSystemIn
 		"3 - App Render timing\n"
 		"4 - Compositor Render timing\n"
 		"5 - Version Info\n"
-	);
-
-	REGISTER_CVAR2("hmd_post_inject_camera", &s_hmd_post_inject_camera, s_hmd_post_inject_camera,
-		VF_NULL, "Reduce latency by injecting updated updated camera at render thread as late as possible before submitting draw calls to GPU\n"
-		"0 - Disable\n"
-		"1 - Enable\n"
 	);
 
 	return true;

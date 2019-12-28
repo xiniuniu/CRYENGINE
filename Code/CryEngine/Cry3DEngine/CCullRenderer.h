@@ -1,9 +1,10 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef __CCULLRENDERER__
-#define __CCULLRENDERER__
+#pragma once
 
 #include "VMath.hpp"
+
+#include <CryThreading/IThreadManager.h>		// For CScopedFloatingPointException
 
 //#define CULL_RENDERER_REPROJ_DEBUG
 #define CULL_RENDERER_MINZ
@@ -19,7 +20,7 @@ namespace NAsyncCull
 namespace Debug
 {
 
-inline SAuxVertex* Generate2DBox(SAuxVertex* pVertices, float fX, float fY, float fHeigth, float fWidth, const ColorB& rColor, float fScreenHeigth, float fScreenWidth)
+inline SAuxVertex* Generate2DBox(SAuxVertex* pVertices, float fX, float fY, float fHeigth, float fWidth, const ColorB& rColor)
 {
 	float fPosition[4][2] =
 	{
@@ -29,34 +30,25 @@ inline SAuxVertex* Generate2DBox(SAuxVertex* pVertices, float fX, float fY, floa
 		{ fX + fWidth, fY           }
 	};
 
-	// compute normalized position from absolute points
-	Vec3 vPosition[4] =
-	{
-		Vec3(fPosition[0][0] / fScreenWidth, fPosition[0][1] / fScreenHeigth, 0.0f),
-		Vec3(fPosition[1][0] / fScreenWidth, fPosition[1][1] / fScreenHeigth, 0.0f),
-		Vec3(fPosition[2][0] / fScreenWidth, fPosition[2][1] / fScreenHeigth, 0.0f),
-		Vec3(fPosition[3][0] / fScreenWidth, fPosition[3][1] / fScreenHeigth, 0.0f)
-	};
-
 	SAuxVertex v = { { 0, 0, 0}, {{ rColor.pack_argb8888() }}, { 0, 0 } };
 
 	pVertices[0] = v;
-	pVertices[0].xyz = vPosition[0];
+	pVertices[0].xyz = Vec3(fPosition[0][0], fPosition[0][1], 0.0f);
 
 	pVertices[1] = v;
-	pVertices[1].xyz = vPosition[1];
+	pVertices[1].xyz = Vec3(fPosition[1][0], fPosition[1][1], 0.0f);
 
 	pVertices[2] = v;
-	pVertices[2].xyz = vPosition[2];
+	pVertices[2].xyz = Vec3(fPosition[2][0], fPosition[2][1], 0.0f);
 
 	pVertices[3] = v;
-	pVertices[3].xyz = vPosition[0];
+	pVertices[3].xyz = Vec3(fPosition[0][0], fPosition[0][1], 0.0f);
 
 	pVertices[4] = v;
-	pVertices[4].xyz = vPosition[2];
+	pVertices[4].xyz = Vec3(fPosition[2][0], fPosition[2][1], 0.0f);
 
 	pVertices[5] = v;
-	pVertices[5].xyz = vPosition[3];
+	pVertices[5].xyz = Vec3(fPosition[3][0], fPosition[3][1], 0.0f);
 
 	return pVertices + 6;
 }
@@ -101,14 +93,16 @@ private:
 	tdZexel m_ZBufferOrig[SIZEX * SIZEY];
 #endif
 
-	uint32 m_DrawCall;
-	uint32 m_PolyCount;
+	uint32               m_DrawCall;
+	uint32               m_PolyCount;
+
+	SGraphicsPipelineKey m_cullGraphicsContextKey;
 
 	template<bool WRITE, bool CULL, bool CULL_BACKFACES>
 	inline bool Triangle(
-	  const NVMath::vec4& rV0,
-	  const NVMath::vec4& rV1,
-	  const NVMath::vec4& rV2)
+		const NVMath::vec4& rV0,
+		const NVMath::vec4& rV1,
+		const NVMath::vec4& rV2)
 	{
 		using namespace NVMath;
 
@@ -211,11 +205,7 @@ private:
 	}
 
 	template<bool WRITE, bool CULL, bool PROJECT, bool CULL_BACKFACES>
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_32BIT
-	inline bool Triangle2D(NVMath::vec4 rV0, NVMath::vec4 rV1, NVMath::vec4 rV2, uint32 MinX = 0, uint32 MinY = 0, uint32 MaxX = 0, uint32 MaxY = 0, NVMath::vec4& VMinMax = NVMath::Vec4Zero(), NVMath::vec4& V210 = NVMath::Vec4Zero())
-#else
-	inline bool Triangle2D(NVMath::vec4 rV0, NVMath::vec4 rV1, NVMath::vec4 rV2, uint32 MinX = 0, uint32 MinY = 0, uint32 MaxX = 0, uint32 MaxY = 0, NVMath::vec4 VMinMax = NVMath::Vec4Zero (), NVMath::vec4 V210 = NVMath::Vec4Zero ())
-#endif
+	inline bool Triangle2D(NVMath::vec4 rV0, NVMath::vec4 rV1, NVMath::vec4 rV2, uint32 MinX = 0, uint32 MinY = 0, uint32 MaxX = 0, uint32 MaxY = 0, NVMath::vec4 VMinMax = NVMath::Vec4Zero(), NVMath::vec4 V210 = NVMath::Vec4Zero())
 	{
 		using namespace NVMath;
 
@@ -403,8 +393,6 @@ private:
 		const vec4 Y204 = Mul(Y20, Vec4Four());
 		const vec4 Y134 = Mul(Y13, Vec4Four());
 		const vec4 Y234 = Mul(Y23, Vec4Four());
-		const vec4 Y304 = Sub(Y104, Y204);
-		const vec4 Y334 = Sub(Y134, Y234);
 
 		vec4 Visible = Vec4FFFFFFFF();
 		uint16 y = MinY;
@@ -467,14 +455,17 @@ public:
 		delete[] m_ZBufferSwap;
 	}
 
-	void Prepare()
+	void Prepare(const SGraphicsPipelineKey& cullGraphicsContextKey)
 	{
+		m_cullGraphicsContextKey = cullGraphicsContextKey;
+
 		if (m_nNumWorker)
 		{
 			return;
 		}
 
 		m_nNumWorker = gEnv->pJobManager->GetNumWorkerThreads();
+		CRY_ASSERT(m_ZBufferSwap == nullptr);
 		m_ZBufferSwap = new tdZexel*[m_nNumWorker];
 		for (uint32 i = 0; i < m_nNumWorker; ++i)
 		{
@@ -497,7 +488,7 @@ public:
 	{
 		m_VMaxXY = NVMath::int32Tofloat(NVMath::Vec4(SIZEX, SIZEY, SIZEX, SIZEY));
 
-		tdZexel* pPinned = gEnv->pRenderer->PinOcclusionBuffer(m_Reproject);
+		tdZexel* pPinned = gEnv->pRenderer->PinOcclusionBuffer(m_Reproject, m_cullGraphicsContextKey);
 		if (!pPinned)
 		{
 			m_ZInput = m_ZBufferMainMemory;
@@ -518,7 +509,7 @@ public:
 	{
 		if (m_ZInput != m_ZBufferMainMemory)
 		{
-			gEnv->pRenderer->UnpinOcclusionBuffer();
+			gEnv->pRenderer->UnpinOcclusionBuffer(m_cullGraphicsContextKey);
 			m_ZInput = m_ZBufferMainMemory;
 		}
 	}
@@ -528,8 +519,13 @@ public:
 		//#define USE_W_DEPTH
 		//#define SCALE_DEPTH
 
+		// with disabled job system all work happens on the main thread, then we simply use the first buffer
+		CRY_ASSERT(JobManager::IsWorkerThread() || CryGetCurrentThreadId() == gEnv->mMainThreadId);
 		uint32 nWorkerThreadID = JobManager::GetWorkerThreadId();
-		float* pZBufferSwap = m_ZBufferSwap[nWorkerThreadID];
+		float* pZBufferSwap =
+			nWorkerThreadID == JobManager::s_nonWorkerThreadId
+			? m_ZBufferSwap[0]
+			: m_ZBufferSwap[nWorkerThreadID];
 
 		int sizeX = SIZEX;
 		int sizeY = SIZEY;
@@ -582,11 +578,11 @@ public:
 
 			const float nearestLinear = b / (nearestMax - a);
 			const vec4 vfEpsilon = NVMath::Vec4Epsilon();
-			const vec4 vfOne = NVMath::Vec4One();
-			const vec4 vZero = NVMath::Vec4Zero();
 
 			vec4* pSrcZ = reinterpret_cast<vec4*>(&m_ZInput[nStartLine * sizeX]);
 
+			// Disable fp exceptions in the loop
+			CScopedFloatingPointException fpExceptionScope(eFPE_None);
 			for (y = nStartLine, fY = static_cast<float>(nStartLine); y < nStartLine + nNumLines; y++, fY += 1.0f)
 			{
 				const vec4 vYYYY = NVMath::Vec4(fY);
@@ -633,7 +629,7 @@ public:
 						float newDepth = Vec4float<2>(vNewDepth);
 #endif
 						// It is faster to use simple non-vectorized code to write the depth in the buffer
-
+						// The comparison will always test false if newDepth is NaN
 						if (newDepth > 0.f)
 						{
 							int X;
@@ -1399,8 +1395,8 @@ public:
 	}
 	template<bool WRITE>
 	inline bool Rasterize(const NVMath::vec4* pViewProj, tdVertexCacheArg vertexCache,
-	                            const tdIndex* __restrict pIndices, const uint32 ICount,
-	                            const uint8* __restrict pVertices, const uint32 VertexSize, const uint32 VCount)
+	                      const tdIndex* __restrict pIndices, const uint32 ICount,
+	                      const uint8* __restrict pVertices, const uint32 VertexSize, const uint32 VCount)
 	{
 		using namespace NVMath;
 		if (!VCount || !ICount)
@@ -1496,29 +1492,20 @@ public:
 	{
 		// project buffer to the screen
 #if defined(CULLING_ENABLE_DEBUG_OVERLAY)
+		IRenderAuxGeom* pAux = pRenderer->GetIRenderAuxGeom();
+
 		nStep %= 32;
 		if (!nStep)
 		{
 			return;
 		}
 
-		//if(!m_DebugRender)
-		//	return;
-
-		const float FarPlaneInv = 255.f / pRenderer->GetCamera().GetFarPlane();
-
 		SAuxGeomRenderFlags oFlags(e_Def2DPublicRenderflags);
 		oFlags.SetDepthTestFlag(e_DepthTestOff);
 		oFlags.SetDepthWriteFlag(e_DepthWriteOff);
 		oFlags.SetCullMode(e_CullModeNone);
 		oFlags.SetAlphaBlendMode(e_AlphaNone);
-		pRenderer->GetIRenderAuxGeom()->SetRenderFlags(oFlags);
-
-		int nScreenHeight = gEnv->pRenderer->GetHeight();
-		int nScreenWidth = gEnv->pRenderer->GetWidth();
-
-		float fScreenHeight = (float)nScreenHeight;
-		float fScreenWidth = (float)nScreenWidth;
+		SAuxGeomRenderFlags prevFlags = pAux->SetRenderFlags(oFlags);
 
 		float fTopOffSet = 35.0f;
 		float fSideOffSet = 35.0f;
@@ -1526,7 +1513,7 @@ public:
 		std::vector<SAuxVertex> vertices;
 		vertices.resize(SIZEX*SIZEY * 6);
 		
-		 SAuxVertex* __restrict pVertices = vertices.data();
+		SAuxVertex* __restrict pVertices = vertices.data();
 
 		// draw z-buffer after reprojection (unknown parts are red)
 		fTopOffSet += 200.0f;
@@ -1550,15 +1537,17 @@ public:
 				ColorB Color2(ValueColor2, ValueColor2 * 16, ValueColor2 * 256, 222);
 				ColorB Color3(ValueColor3, ValueColor3 * 16, ValueColor3 * 256, 222);
 
-				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX0, fY, 3.0f, 3.0f, Color0, fScreenHeight, fScreenWidth);
-				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX1, fY, 3.0f, 3.0f, Color1, fScreenHeight, fScreenWidth);
-				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX2, fY, 3.0f, 3.0f, Color2, fScreenHeight, fScreenWidth);
-				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX3, fY, 3.0f, 3.0f, Color3, fScreenHeight, fScreenWidth);
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX0, fY, 3.0f, 3.0f, Color0);
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX1, fY, 3.0f, 3.0f, Color1);
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX2, fY, 3.0f, 3.0f, Color2);
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX3, fY, 3.0f, 3.0f, Color3);
 
 				CRY_ASSERT(pVertices <= vertices.data() + vertices.size());
 			}
 		}
-		pRenderer->GetIRenderAuxGeom()->DrawBuffer(vertices.data(), vertices.size(), false);
+
+		pAux->DrawBuffer(vertices.data(), vertices.size(), false);
+		pAux->SetRenderFlags(prevFlags);
 #endif
 	}
 
@@ -1578,4 +1567,3 @@ public:
 
 template<uint32 SIZEX, uint32 SIZEY>
 CRY_ALIGN(128) float NAsyncCull::CCullRenderer<SIZEX, SIZEY>::m_ZBufferMainMemory[SIZEX * SIZEY];
-#endif

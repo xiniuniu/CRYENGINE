@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -24,9 +24,8 @@ public:
 	SDeformInfo*                   m_pDeformInfo;
 	TArray<struct SHRenderTarget*> m_RTargets;
 	CCamera*                       m_pCamera;
-	SSkyInfo*                      m_pSky;
 	SDetailDecalInfo*              m_pDetailDecalInfo;
-	CConstantBuffer*               m_pCB;
+	CConstantBufferPtr             m_pConstantBuffer;
 	uint16                         m_Id;
 	uint16                         m_IdGroup;
 
@@ -35,8 +34,6 @@ public:
 
 	/////////////////////////////////////////////////////
 
-	float        m_fMinMipFactorLoad;
-	volatile int m_nRefCounter;
 	int          m_nLastTexture;
 	int          m_nFrameLoad;
 	uint32       m_nUpdateFrameID;
@@ -100,7 +97,6 @@ public:
 	virtual void                       SetMaterialName(const char* szName) final { m_szMaterialName = szName; }
 	virtual CCamera*                   GetCamera() final                         { return m_pCamera; }
 	virtual void                       SetCamera(CCamera* pCam) final            { m_pCamera = pCam; }
-	virtual SSkyInfo*                  GetSkyInfo() final                        { return m_pSky; }
 	virtual const float&               GetAlphaRef() const final                 { return m_AlphaRef; }
 	virtual void                       SetAlphaRef(float alphaRef) final         { m_AlphaRef = alphaRef; }
 	virtual SEfResTexture*             GetTexture(int nSlot) const final         { return m_Textures[nSlot]; }
@@ -152,8 +148,7 @@ public:
 		m_pDeformInfo = NULL;
 		m_pDetailDecalInfo = NULL;
 		m_pCamera = NULL;
-		m_pSky = NULL;
-		m_pCB = NULL;
+		m_pConstantBuffer.reset();
 		m_nMtlLayerNoDrawFlags = 0;
 		m_flags = 0;
 		m_nUpdateFrameID = 0;
@@ -181,12 +176,12 @@ public:
 
 	virtual void          SetInvalid() final;
 	// Check if shader resource is valid
-	virtual bool          IsValid() { return 0 == (m_flags & eFlagInvalid); };
+	virtual bool          IsValid() { return 0 == (m_flags & eFlagInvalid); }
 
 	~CShaderResources();
 	void                      RT_Release();
-	virtual void              Release() final;
-	virtual void              AddRef() final { CryInterlockedIncrement(&m_nRefCounter); }
+	virtual void              Release() const final;
+	virtual void              AddRef() const final { SBaseShaderResources::AddRef(); }
 	virtual void              ConvertToInputResource(SInputShaderResources* pDst) final;
 	virtual CShaderResources* Clone() const final;
 	virtual void              SetShaderParams(SInputShaderResources* pDst, IShader* pSH) final;

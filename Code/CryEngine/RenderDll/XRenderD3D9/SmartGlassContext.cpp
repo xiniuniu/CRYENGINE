@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //	File:ISmartGlassManager.h
@@ -248,7 +248,7 @@ void CSmartGlassContext::CreateSwapChain()
 	// Ensure that DXGI does not queue more than one frame at a time. This both reduces
 	// latency and ensures that the application will only render after each VSync, minimizing
 	// power consumption.
-	dxgiDevice->SetMaximumFrameLatency(MAX_FRAME_LATENCY);
+	dxgiDevice->SetMaximumFrameLatency(1);
 
 	CreateSwapChainForSmartGlassDevice(m_pDevice, &swapChainDesc, &m_pSwapChain);
 
@@ -272,7 +272,7 @@ void CSmartGlassContext::CreateSwapChain()
 	m_viewport.MaxDepth = 1.0f;
 
 	m_pCryTexture = CTexture::GetOrCreateTextureObject("$SmartGlass", (uint32)m_viewport.Width, (uint32)m_viewport.Height, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_SMARTGLASS);
-	bool bRes = m_pCryTexture->CreateRenderTarget(eTF_R8G8B8A8, Clr_Empty); //
+	m_pCryTexture->CreateRenderTarget(eTF_R8G8B8A8, Clr_Empty); //
 	m_pPrevRenderTargetView = reinterpret_cast<D3DSurface*>(m_pCryTexture->m_pDeviceRTV);
 	m_pPrevDeviceTexture = m_pCryTexture->m_pDevTexture;
 	m_pCryTexture->m_pDeviceRTV = m_pRenderTargetView;

@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -10,15 +10,27 @@
 class CRainStage : public CGraphicsPipelineStage
 {
 public:
-	CRainStage();
+	static const EGraphicsPipelineStage StageID = eStage_Rain;
+
+	CRainStage(CGraphicsPipeline& graphicsPipeline);
 	virtual ~CRainStage();
 
-	virtual void Init() override;
-	virtual void Prepare(CRenderView* pRenderView) override;
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return CRendererCVars::IsRainEnabled() && CRendererCVars::CV_r_PostProcess;
+	}
 
-	void         ExecuteRainPreprocess();
-	void         ExecuteDeferredRainGBuffer();
-	void         Execute();
+	void Init() final;
+	void Destroy();
+	void Update() final;
+	void OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater) final;
+
+	void ExecuteRainOcclusion();
+	void ExecuteDeferredRainGBuffer();
+	void Execute();
+
+	bool IsDeferredRainEnabled() const  { return CRendererCVars::IsRainEnabled() && gcpRendD3D->m_bDeferredRainEnabled; }
+	bool IsRainOcclusionEnabled() const { return CRendererCVars::IsRainEnabled() && gcpRendD3D->m_bDeferredRainOcclusionEnabled; }
 
 private:
 	static const int32  m_slices = 12;
@@ -26,7 +38,8 @@ private:
 	static const uint32 RainRippleTexCount = 24;
 
 private:
-	void ExecuteRainOcclusionGen(CRenderView* pRenderView);
+	void ExecuteRainOcclusionGen();
+	bool Initialized() const { return m_pSurfaceFlowTex.get() != nullptr; }
 
 private:
 	_smart_ptr<CTexture> m_pSurfaceFlowTex;
@@ -54,5 +67,4 @@ private:
 	buffer_handle_t                                m_rainVertexBuffer = ~0u;
 
 	SRainParams                                    m_RainVolParams;
-
 };

@@ -1,8 +1,9 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
 #include "CharacterToolForm.h"
+#include <QApplication>
 #include <QAction>
 #include <QBoxLayout>
 #include <QDir>
@@ -21,14 +22,14 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
-#include <QTreeView>
-#include <Serialization/QPropertyTree/QPropertyTree.h>
+#include <QAdvancedTreeView.h>
+#include <Serialization/QPropertyTreeLegacy/QPropertyTreeLegacy.h>
 #include "QViewport.h"
 #include "DockTitleBarWidget.h"
 #include "UnsavedChangesDialog.h"
 #include "FileDialogs/EngineFileDialog.h"
 #include "FileDialogs/SystemFileDialog.h"
-#include "FilePathUtil.h"
+#include "PathUtils.h"
 #include "SplitViewport.h"
 #include "CharacterDocument.h"
 #include "AnimationList.h"
@@ -63,12 +64,11 @@
 #include "DockWidgetManager.h"
 #include "CharacterGizmoManager.h"
 #include "FileDialogs/EngineFileDialog.h"
-#include "Controls/SaveChangesDialog.h"
 #include "EditorFramework/BroadcastManager.h"
 #include <QtViewPane.h>
 #include <CryIcon.h>
 #include "Controls/QuestionDialog.h"
-#include <ICommandManager.h>
+#include <Commands/ICommandManager.h>
 #include "Preferences/ViewportPreferences.h"
 
 extern CharacterTool::System* g_pCharacterToolSystem;
@@ -88,12 +88,12 @@ struct ViewportPlaybackHotkeyConsumer : public QViewportConsumer
 
 	void OnViewportKey(const SKeyEvent& ev) override
 	{
-		if (ev.type == ev.PRESS && ev.key != Qt::Key_Delete && ev.key != Qt::Key_D && ev.key != Qt::Key_Z)
+		if (ev.type == ev.TYPE_PRESS && ev.key != Qt::Key_Delete && ev.key != Qt::Key_D && ev.key != Qt::Key_Z)
 			playbackPanel->HandleKeyEvent(ev.key);
 	}
 };
 
-static string GetStateFilename()
+string GetStateFilename()
 {
 	string result = GetIEditor()->GetUserFolder();
 	result += "\\CharacterTool\\State.json";
@@ -145,8 +145,6 @@ CharacterToolForm::CharacterToolForm(QWidget* parent)
 	m_displayParametersSplitterWidths[0] = 400;
 	m_displayParametersSplitterWidths[1] = 200;
 
-	Initialize();
-
 	setFocusPolicy(Qt::ClickFocus);
 
 	CBroadcastManager* const pGlobalBroadcastManager = GetIEditor()->GetGlobalBroadcastManager();
@@ -196,22 +194,28 @@ void CharacterToolForm::UpdatePanesMenu()
 	m_menuView = createPopupMenu();
 	m_menuView->setParent(this);
 	m_menuView->setTitle("&View");
-	menuBar()->insertMenu(menuBar()->actions()[1], m_menuView);
+	m_pPaneMenu->insertMenu(m_pPaneMenu->actions()[1], m_menuView);
 }
 
 void CharacterToolForm::Initialize()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	if (m_private)
+	{
+		CryWarning(VALIDATOR_MODULE_EDITOR, VALIDATOR_ERROR, "Character Tool is being initialized twice! skipping second initialization.");
+		return;
+	}
+	
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	m_private.reset(new SPrivate(this, m_system->document.get()));
-
+ 
 	m_modeCharacter.reset(new ModeCharacter());
 
 	setDockNestingEnabled(true);
 
 	EXPECTED(connect(m_system->document.get(), SIGNAL(SignalExplorerSelectionChanged()), this, SLOT(OnExplorerSelectionChanged())));
 	EXPECTED(connect(m_system->document.get(), SIGNAL(SignalCharacterLoaded()), this, SLOT(OnCharacterLoaded())));
-	EXPECTED(connect(m_system->document.get(), SIGNAL(SignalDisplayOptionsChanged(const DisplayOptions &)), this, SLOT(OnDisplayOptionsChanged(const DisplayOptions &))));
-	EXPECTED(connect(QApplication::instance(), SIGNAL(focusChanged(QWidget*, QWidget*)), this, SLOT(OnFocusChanged(QWidget*, QWidget*))));
+	EXPECTED(connect(m_system->document.get(), SIGNAL(SignalDisplayOptionsChanged(const DisplayOptions&)), this, SLOT(OnDisplayOptionsChanged(const DisplayOptions&))));
+	EXPECTED(connect(QApplication::instance(), SIGNAL(focusChanged(QWidget*,QWidget*)), this, SLOT(OnFocusChanged(QWidget*,QWidget*))));
 
 	QWidget* centralWidget = new QWidget();
 	setCentralWidget(centralWidget);
@@ -244,6 +248,37 @@ void CharacterToolForm::Initialize()
 			EXPECTED(connect(m_displayParametersButton, SIGNAL(toggled(bool)), this, SLOT(OnDisplayParametersButton())));
 			topLayout->addWidget(m_displayParametersButton);
 
+			m_createProxyModeButton = new QToolButton();
+			m_createProxyModeButton->setText("Edit Phys Proxies");
+			m_createProxyModeButton->setToolTip("Create/edit the main set of character proxies");
+			m_createProxyModeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+			m_createProxyModeButton->setCheckable(true);
+			m_createProxyModeButton->setIcon(CryIcon("icons:common/animation_character.ico"));
+			EXPECTED(connect(m_createProxyModeButton, &QToolButton::pressed, [this](){ m_createRagdollModeButton->setChecked(false); }));
+			topLayout->addWidget(m_createProxyModeButton);
+
+			m_createRagdollModeButton = new QToolButton();
+			m_createRagdollModeButton->setText("Edit Ragdoll Proxies");
+			m_createRagdollModeButton->setToolTip("Create/edit dedicated ragdoll proxies (if different from the main set)");
+			m_createRagdollModeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+			m_createRagdollModeButton->setCheckable(true);
+			EXPECTED(connect(m_createRagdollModeButton, &QToolButton::pressed, [this](){ m_createProxyModeButton->setChecked(false); }));
+			m_createRagdollModeButton->setIcon(CryIcon("icons:common/animation_skeleton.ico"));
+			topLayout->addWidget(m_createRagdollModeButton);
+
+			m_clearProxiesButton = new QToolButton();
+			m_clearProxiesButton->setText("Clear Proxies");
+			m_clearProxiesButton->setToolTip("Clears the current set of physics proxies");
+			m_clearProxiesButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+			m_clearProxiesButton->setIcon(CryIcon("icons:General/Remove_Negative.ico"));
+			EXPECTED(connect(m_clearProxiesButton, SIGNAL(clicked()), this, SLOT(OnClearProxiesButton())));
+			topLayout->addWidget(m_clearProxiesButton);
+
+			m_testRagdollButton = new QToolButton();
+			m_testRagdollButton->setText("Test Ragdoll");
+			EXPECTED(connect(m_testRagdollButton, &QToolButton::pressed, [this](){ ((ModeCharacter*)m_modeCharacter.data())->CommenceRagdollTest(); }));
+			topLayout->addWidget(m_testRagdollButton);
+
 			centralLayout->addLayout(topLayout, 0);
 		}
 
@@ -251,16 +286,16 @@ void CharacterToolForm::Initialize()
 		centralLayout->addWidget(m_displayParametersSplitter, 1);
 
 		m_splitViewport = new QSplitViewport(0);
-		EXPECTED(connect(m_splitViewport->OriginalViewport(), SIGNAL(SignalPreRender(const SRenderContext &)), this, SLOT(OnPreRenderOriginal(const SRenderContext &))));
-		EXPECTED(connect(m_splitViewport->OriginalViewport(), SIGNAL(SignalRender(const SRenderContext &)), this, SLOT(OnRenderOriginal(const SRenderContext &))));
-		EXPECTED(connect(m_splitViewport->CompressedViewport(), SIGNAL(SignalPreRender(const SRenderContext &)), this, SLOT(OnPreRenderCompressed(const SRenderContext &))));
-		EXPECTED(connect(m_splitViewport->CompressedViewport(), SIGNAL(SignalRender(const SRenderContext &)), this, SLOT(OnRenderCompressed(const SRenderContext &))));
+		EXPECTED(connect(m_splitViewport->OriginalViewport(), SIGNAL(SignalPreRender(const SRenderContext&)), this, SLOT(OnPreRenderOriginal(const SRenderContext&))));
+		EXPECTED(connect(m_splitViewport->OriginalViewport(), SIGNAL(SignalRender(const SRenderContext&)), this, SLOT(OnRenderOriginal(const SRenderContext&))));
+		EXPECTED(connect(m_splitViewport->CompressedViewport(), SIGNAL(SignalPreRender(const SRenderContext&)), this, SLOT(OnPreRenderCompressed(const SRenderContext&))));
+		EXPECTED(connect(m_splitViewport->CompressedViewport(), SIGNAL(SignalRender(const SRenderContext&)), this, SLOT(OnRenderCompressed(const SRenderContext&))));
 		EXPECTED(connect(m_splitViewport->CompressedViewport(), SIGNAL(SignalUpdate()), this, SLOT(OnViewportUpdate())));
 		EXPECTED(connect(m_splitViewport, &QSplitViewport::dropFile, [this](const QString& file)
 			{
 				const QString cmdline = QString("meshimporter.generate_character '%1'").arg(file);
 				const string result = GetIEditor()->GetICommandManager()->Execute(cmdline.toLocal8Bit().constData());
-		  }));
+			}));
 
 		m_displayParametersSplitter->addWidget(m_splitViewport);
 
@@ -277,8 +312,9 @@ void CharacterToolForm::Initialize()
 
 	m_splitViewport->CompressedViewport()->installEventFilter(this);
 
-	QMenuBar* menu = new QMenuBar(this);
-	QMenu* fileMenu = menu->addMenu("&File");
+	m_pPaneMenu = new QMenu(this);
+	
+	QMenu* fileMenu = m_pPaneMenu->addMenu("&File");
 	EXPECTED(connect(fileMenu->addAction("&New Character..."), SIGNAL(triggered()), this, SLOT(OnFileNewCharacter())));
 	EXPECTED(connect(fileMenu->addAction("&Open Character..."), SIGNAL(triggered()), this, SLOT(OnFileOpenCharacter())));
 	QMenu* menuFileRecent = fileMenu->addMenu("&Recent Characters");
@@ -296,10 +332,12 @@ void CharacterToolForm::Initialize()
 	EXPECTED(connect(importMenu->addAction("Animation"), &QAction::triggered, []() { GetIEditor()->OpenView("Animation"); }));
 	EXPECTED(connect(importMenu->addAction("Skeleton"), &QAction::triggered, []() { GetIEditor()->OpenView("Skeleton"); }));
 
-	m_menuLayout = menu->addMenu("&Layout");
+	m_menuLayout = m_pPaneMenu->addMenu("&Layout");
 	UpdateLayoutMenu();
 
-	setMenuBar(menu);
+	m_pPaneMenu->addSeparator();
+	QMenu* menuItem = m_pPaneMenu->addMenu("Help");
+	menuItem->addAction(GetIEditor()->GetICommandManager()->GetAction("general.help"));
 
 	m_animEventPresetPanel = new AnimEventPresetPanel(this, m_system);
 
@@ -345,7 +383,7 @@ QRect CharacterToolForm::GetPaneRect()
 
 ExplorerPanel* CharacterToolForm::CreateExplorerPanel()
 {
-	auto panel = new ExplorerPanel(this, &*m_system->explorerData);
+	auto panel = new ExplorerPanel(this, m_system->explorerData.get());
 	m_system->explorerPanels.push_back(panel);
 
 	EXPECTED(connect(panel, &ExplorerPanel::destroyed, this, &CharacterToolForm::OnPanelDestroyed));
@@ -369,13 +407,14 @@ void CharacterToolForm::OnPanelDestroyed(QObject* obj)
 	}
 }
 
-void CharacterToolForm::OnFocusChanged(QWidget *old, QWidget *now)
+void CharacterToolForm::OnFocusChanged(QWidget* old, QWidget* now)
 {
 	m_bHasFocus = false;
 	QWidget* parent = parentWidget();
 	if (parent)
 	{
-		while (parent->parentWidget()) parent = parent->parentWidget();
+		while (parent->parentWidget())
+			parent = parent->parentWidget();
 		m_bHasFocus = parent->isAncestorOf(now);
 	}
 }
@@ -490,9 +529,22 @@ void CharacterToolForm::Serialize(Serialization::IArchive& ar)
 	}
 }
 
+QMenu* CharacterToolForm::GetPaneMenu() const
+{
+	return m_pPaneMenu;
+}
+
 void CharacterToolForm::OnIdleUpdate()
 {
-	if (gViewportPreferences.toolsRenderUpdateMutualExclusive && !m_bHasFocus) return;
+	if (gViewportPreferences.toolsRenderUpdateMutualExclusive)
+	{
+		// determine, if CT or any related widget has keyboard focus or is active window
+		bool hasCharacterToolOrAnyAccordingWidgetFocus = m_bHasFocus || m_blendSpacePreview->hasFocus() || m_blendSpacePreview->isActiveWindow();
+		for (auto const& it : m_dockWidgets)
+			hasCharacterToolOrAnyAccordingWidgetFocus = hasCharacterToolOrAnyAccordingWidgetFocus || it->hasFocus() || it->isActiveWindow();
+
+		if (!hasCharacterToolOrAnyAccordingWidgetFocus) return;
+	}
 
 	if (m_splitViewport)
 	{
@@ -702,7 +754,7 @@ void CharacterToolForm::UpdateLayoutMenu()
 	vector<string> layouts = FindLayoutNames();
 	for (size_t i = 0; i < layouts.size(); ++i)
 	{
-		QAction* action = addToLayout(layouts[i].c_str(), SLOT(OnLayoutSet()), QVariant(layouts[i].c_str()));
+		addToLayout(layouts[i].c_str(), SLOT(OnLayoutSet()), QVariant(layouts[i].c_str()));
 	}
 	if (!layouts.empty())
 		m_menuLayout->addSeparator();
@@ -799,30 +851,45 @@ void CharacterToolForm::OnDisplayOptionsChanged(const DisplayOptions& settings)
 
 }
 
+void CharacterToolForm::OnClearProxiesButton()
+{
+	if (CharacterDefinition* cdf = m_system->document->GetLoadedCharacterDefinition())
+	{
+		cdf->RemoveRagdollAttachments();
+		GetPropertiesPanel()->PropertyTree()->revert();
+		GetPropertiesPanel()->OnChanged();
+		EntryModifiedEvent ev;
+		ev.id = m_system->document->GetActiveCharacterEntry()->id;
+		m_system->document->OnCharacterModified(ev);
+	}
+}
+
 void CharacterToolForm::OnPreRenderCompressed(const SRenderContext& context)
 {
+	m_system->document->SetAuxRenderer(context.pAuxGeom);
 	m_system->document->PreRender(context);
 }
 
 void CharacterToolForm::OnRenderCompressed(const SRenderContext& context)
 {
+	m_system->document->SetAuxRenderer(context.pAuxGeom);
 	m_system->document->Render(context);
 }
 
 void CharacterToolForm::OnPreRenderOriginal(const SRenderContext& context)
 {
+	m_system->document->SetAuxRenderer(context.pAuxGeom);
 	m_system->document->PreRenderOriginal(context);
 }
 
 void CharacterToolForm::OnRenderOriginal(const SRenderContext& context)
 {
+	m_system->document->SetAuxRenderer(context.pAuxGeom);
 	m_system->document->RenderOriginal(context);
 }
 
 void CharacterToolForm::OnCharacterLoaded()
 {
-	ICharacterInstance* character = m_system->document->CompressedCharacter();
-
 	const char* filename = m_system->document->LoadedCharacterFilename();
 	for (size_t i = 0; i < m_recentCharacters.size(); ++i)
 		if (stricmp(m_recentCharacters[i].c_str(), filename) == 0)
@@ -928,6 +995,11 @@ void CharacterToolForm::OnViewportUpdate()
 void CharacterToolForm::OnAnimEventPresetPanelPutEvent()
 {
 
+}
+
+int CharacterToolForm::ProxyMakingMode() 
+{ 
+	return m_createProxyModeButton->isChecked() ? 1 : (m_createRagdollModeButton->isChecked() ? 2 : 0); 
 }
 
 bool CharacterToolForm::event(QEvent* ev)
@@ -1065,8 +1137,8 @@ void CharacterToolForm::closeEvent(QCloseEvent* ev)
 			const auto& entries = it.second;
 
 			const auto& handler = std::find(filenamesToSave.begin(), filenamesToSave.end(), filename) != filenamesToSave.end()
-				? std::function<void(ExplorerEntry*)>([&](ExplorerEntry* entry) { m_system->explorerData->SaveEntry(&saveOutput, entry); })
-				: std::function<void(ExplorerEntry*)>([&](ExplorerEntry* entry) { m_system->explorerData->Revert(entry); });
+			                      ? std::function<void(ExplorerEntry*)>([&](ExplorerEntry* entry) { m_system->explorerData->SaveEntry(&saveOutput, entry); })
+			                      : std::function<void(ExplorerEntry*)>([&](ExplorerEntry* entry) { m_system->explorerData->Revert(entry); });
 
 			std::for_each(entries.begin(), entries.end(), handler);
 		}
@@ -1135,6 +1207,26 @@ bool CharacterToolForm::eventFilter(QObject* sender, QEvent* ev)
 #endif
 	}
 	return false;
+}
+
+void CharacterToolForm::customEvent(QEvent* event)
+{
+	// TODO: This handler should be removed whenever this editor is refactored to be a CDockableEditor
+	if (event->type() == SandboxEvent::Command)
+	{
+		CommandEvent* commandEvent = static_cast<CommandEvent*>(event);
+
+		const string& command = commandEvent->GetCommand();
+		if (command == "general.help")
+		{
+			event->setAccepted(EditorUtils::OpenHelpPage(GetPaneTitle()));
+		}
+	}
+
+	if (!event->isAccepted())
+	{
+		QWidget::customEvent(event);
+	}
 }
 
 void CharacterToolForm::OnFileRecent()
